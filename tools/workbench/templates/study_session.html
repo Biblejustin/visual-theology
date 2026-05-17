@@ -29,8 +29,25 @@
 
         <div id="study-main">
 
+            {% if series_members %}
+            <nav class="series-breadcrumb" aria-label="Sermon series">
+              <span class="label">Series:</span>
+              {% for m in series_members %}
+                <a href="/study/session/{{ m.id }}" class="{% if m.id == session.id %}active{% endif %}">
+                  {{ m.series_position }}. {{ m.series_title or m.passage_ref }}
+                </a>{% if not loop.last %} · {% endif %}
+              {% endfor %}
+            </nav>
+            {% endif %}
+
             {% if mode == "card" %}
             <div id="card-area">
+                {% if is_child %}
+                <div class="parent-card-banner">
+                  From parent session: <a href="/study/session/{{ parent_session.id }}">{{ parent_session.passage_ref }}</a>
+                  (broad exegesis, read-only)
+                </div>
+                {% endif %}
                 {% include "partials/study_card.html" %}
             </div>
 

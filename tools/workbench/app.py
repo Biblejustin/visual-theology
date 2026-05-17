@@ -998,6 +998,13 @@ def study_session_view(session_id):
     if not session:
         return redirect(url_for("study_index"))
 
+    # Series context — empty list when standalone.
+    series_members = companion_db.get_series(session_id)
+    parent_session = None
+    if session.get('parent_session_id'):
+        parent_session = companion_db.get_parent(session_id)
+    is_child = bool(parent_session)
+
     # Sermon-coach integration: which sermons are linked to this session?
     linked_sermons = []
     review = None
@@ -1031,20 +1038,26 @@ def study_session_view(session_id):
     card_phase_keys = [p["key"] for p in CARD_PHASES]
 
     if phase in card_phase_keys:
-        # Card mode (phases 1-5)
+        # Card mode (phases 1-5).
+        # Children inherit parent card content (read-only) per v1 spec: no
+        # per-child card overrides yet. Auto-resources, card responses, and the
+        # card-draft notepad all key off the parent when this is a child.
         phase_index = card_phase_keys.index(phase)
         card_def = CARD_PHASES[phase_index]
+        card_session = parent_session if is_child else session
+        card_session_id = card_session['id']
         resource_text = None
         study_bible_notes = None
         if card_def["auto_resource"] == "original_language":
-            resource_text = _get_original_language_text(session)
+            resource_text = _get_original_language_text(card_session)
         elif card_def["auto_resource"] == "study_bibles":
-            study_bible_notes = _get_study_bible_notes(session)
-        responses = companion_db.get_card_responses(session_id, phase)
+            study_bible_notes = _get_study_bible_notes(card_session)
+        responses = companion_db.get_card_responses(card_session_id, phase)
         # Check auto-saved draft first, then last submitted response
-        prefilled = companion_db.get_card_notepad(session_id, f"card_{phase}")
+        prefilled = companion_db.get_card_notepad(card_session_id, f"card_{phase}")
         if not prefilled:
             prefilled = responses[-1]["content"] if responses else ""
+        # Annotations + study-bible notepad stay per-child.
         annotations = companion_db.get_card_annotations(session_id, phase) if phase == "study_bibles" else []
         notepad = companion_db.get_card_notepad(session_id, phase) if phase == "study_bibles" else ""
         return render_template("study_session.html",
@@ -1060,7 +1073,10 @@ def study_session_view(session_id):
                                outline=companion_db.get_outline_tree(session_id),
                                linked_sermons=linked_sermons,
                                review=review,
-                               candidates=candidates)
+                               candidates=candidates,
+                               series_members=series_members,
+                               parent_session=parent_session,
+                               is_child=is_child)
     else:
         # Conversation mode (phase 6+)
         messages = companion_db.get_messages(session_id, limit=200)
@@ -1077,7 +1093,10 @@ def study_session_view(session_id):
                                outline=companion_db.get_outline_tree(session_id),
                                linked_sermons=linked_sermons,
                                review=review,
-                               candidates=candidates)
+                               candidates=candidates,
+                               series_members=series_members,
+                               parent_session=parent_session,
+                               is_child=is_child)
 
 
 @app.route("/study/session/<int:session_id>/discuss", methods=["POST"])
