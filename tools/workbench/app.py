@@ -1122,12 +1122,21 @@ def study_discuss(session_id):
     )
 
 
+def _is_child_session(session_id):
+    """True if this session has a parent (i.e., it's a child in a series)."""
+    sess = companion_db.get_session(session_id)
+    return bool(sess and sess.get("parent_session_id"))
+
+
 @app.route("/study/session/<int:session_id>/card/next", methods=["POST"])
 def study_card_next(session_id):
     """Advance to the next card phase, saving any response."""
     session = companion_db.get_session(session_id)
     if not session:
         return "Session not found", 404
+    if session.get("parent_session_id"):
+        return ("Card writes are not allowed on child sessions; "
+                "their cards are inherited from the parent.", 403)
     phase = session.get("current_phase", "prayer")
     response_text = request.form.get("response", "").strip()
     if response_text:
@@ -1177,6 +1186,8 @@ def study_card_autosave(session_id):
     session = companion_db.get_session(session_id)
     if not session:
         return jsonify({"error": "not found"}), 404
+    if session.get("parent_session_id"):
+        return jsonify({"error": "child_session_read_only"}), 403
     phase = session.get("current_phase", "prayer")
     # Use notepad table for auto-save (upsert by session+phase)
     companion_db.save_card_notepad(session_id, phase=f"card_{phase}", content=content)
@@ -1502,7 +1513,10 @@ def study_session_split(session_id):
                 "INSERT INTO sessions (passage_ref, book, chapter, verse_start, "
                 "verse_end, genre, parent_session_id, series_position, series_title, "
                 "current_phase, status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'prayer', 'active', ?, ?)",
+                # Children start at 'context' (first conversation phase) — they
+                # inherit the parent's card-phase work and the UI renders parent
+                # cards read-only, so card phases would be meaningless on them.
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'context', 'active', ?, ?)",
                 (f"{book_chap_prefix}:{r['verse_start']}-{r['verse_end']}",
                  parent["book"], parent["chapter"], r["verse_start"], r["verse_end"],
                  parent["genre"], session_id, r["position"], r["title"],
