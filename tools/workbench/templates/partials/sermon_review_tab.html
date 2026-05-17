@@ -1,30 +1,43 @@
-{% if linked_sermon %}
+{% if linked_sermons %}
 <div id="review-tab" class="study-tab">
   <header class="review-header">
     <h2>Sunday review</h2>
-    <a href="/sermons/{{ linked_sermon.id }}">Open full review &rarr;</a>
+    {% if linked_sermons|length == 1 %}
+    <a href="/sermons/{{ linked_sermons[0].id }}">Open full review &rarr;</a>
+    {% endif %}
   </header>
 
   {% if candidates %}
-    {% include 'partials/sermon_candidates_list.html' %}
+    {% include 'partials/sermon_candidates_for_session.html' %}
   {% endif %}
 
-  {% set sermon = linked_sermon %}
-  {% if review %}
-    {% include 'partials/sermon_impact_card.html' %}
-    {% include 'partials/sermon_faithfulness_card.html' %}
-    {% include 'partials/sermon_diagnostic_card.html' %}
-    {% include 'partials/sermon_prescription_card.html' %}
-    {% include 'partials/sermon_flag_list.html' %}
-  {% else %}
-    <div class="state-message">Review not ready yet ({{ linked_sermon.sync_status }}).</div>
-  {% endif %}
+  {% for linked_sermon in linked_sermons %}
+    <section class="linked-sermon">
+      {% if linked_sermons|length > 1 %}
+      <header class="linked-sermon-header">
+        <h3>{{ linked_sermon.title }}{% if linked_sermon.preach_date %} <span class="preach-date">({{ linked_sermon.preach_date }})</span>{% endif %}</h3>
+        <a href="/sermons/{{ linked_sermon.id }}">Open full review &rarr;</a>
+      </header>
+      {% endif %}
+      {% set sermon = linked_sermon %}
+      {% if loop.first and review %}
+        {% include 'partials/sermon_impact_card.html' %}
+        {% include 'partials/sermon_faithfulness_card.html' %}
+        {% include 'partials/sermon_diagnostic_card.html' %}
+        {% include 'partials/sermon_prescription_card.html' %}
+        {% include 'partials/sermon_flag_list.html' %}
+      {% else %}
+        <div class="state-message">Review not ready yet ({{ linked_sermon.sync_status }}).</div>
+      {% endif %}
+    </section>
+  {% endfor %}
 
+  {% set sermon = linked_sermons[0] %}
   {% include 'partials/sermon_coach_chat.html' %}
 </div>
 {% elif candidates %}
 <div id="review-tab" class="study-tab">
   {% set sermon = None %}
-  {% include 'partials/sermon_candidates_list.html' %}
+  {% include 'partials/sermon_candidates_for_session.html' %}
 </div>
 {% endif %}

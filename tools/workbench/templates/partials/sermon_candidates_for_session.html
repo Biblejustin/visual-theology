@@ -1,0 +1,19 @@
+{% if candidates %}
+<div class="sermon-card sermon-card-candidates">
+  <h2>Sermons that may have been prepped in this session</h2>
+  <p>Pick the sermon that matches this prep, and we'll link it.</p>
+  <ul>
+    {% for c in candidates %}
+      <li>
+        <form method="post" action="/sermons/{{ c.sermon_id }}/approve-candidate/{{ c.id }}" style="display:inline">
+          <strong>{{ c.title or '(untitled sermon)' }}</strong>
+          <span class="passage">{{ c.bible_text_raw }}</span>
+          {% if c.preach_date %}<span class="preach-date">preached {{ c.preach_date }}</span>{% endif %}
+          <span class="match-reason">{{ c.match_reason }}</span>
+          <button type="submit">Approve</button>
+        </form>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}

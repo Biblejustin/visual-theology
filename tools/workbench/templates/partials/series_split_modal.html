@@ -1,0 +1,19 @@
+<dialog id="series-split-modal" class="series-split-modal">
+  <form method="dialog" id="series-split-form">
+    <h2>Split into sermon series</h2>
+    <p class="hint">Edit the proposed rows. Position 1 narrows this session; positions 2+ create new child sessions.</p>
+    <div id="series-split-loading" hidden>Reading the conversation…</div>
+    <table id="series-split-rows">
+      <thead>
+        <tr><th>#</th><th>Title</th><th>Verses</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <button type="button" id="series-split-add">+ Add sermon</button>
+    <div id="series-split-error" class="error" hidden></div>
+    <menu>
+      <button value="cancel">Cancel</button>
+      <button value="confirm" id="series-split-confirm">Confirm split</button>
+    </menu>
+  </form>
+</dialog>

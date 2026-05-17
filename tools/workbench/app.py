@@ -51,6 +51,7 @@ from companion_agent import build_study_prompt, stream_study_response
 from session_analytics import SessionAnalytics
 from genre_map import get_genre
 from seed_questions import seed_question_bank
+from series_planner import propose_series_plan
 from app_secrets import sermonaudio_api_key, sermonaudio_broadcaster_id, anthropic_api_key
 
 try:
@@ -997,31 +998,37 @@ def study_session_view(session_id):
     if not session:
         return redirect(url_for("study_index"))
 
-    # Sermon-coach integration: is there a linked sermon for this session?
-    linked_sermon = None
+    # Series context — empty list when standalone.
+    series_members = companion_db.get_series(session_id)
+    parent_session = None
+    if session.get('parent_session_id'):
+        parent_session = companion_db.get_parent(session_id)
+    is_child = bool(parent_session)
+
+    # Sermon-coach integration: which sermons are linked to this session?
+    linked_sermons = []
     review = None
     candidates = []
     conn = companion_db._conn()
     try:
-        link_row = conn.execute("""
+        link_rows = conn.execute("""
             SELECT s.*
             FROM sermons s
             JOIN sermon_links sl ON sl.sermon_id = s.id
             WHERE sl.session_id = ? AND sl.link_status = 'active'
-            LIMIT 1
-        """, (session_id,)).fetchone()
-        if link_row:
-            linked_sermon = dict(link_row)
+            ORDER BY s.preach_date DESC
+        """, (session_id,)).fetchall()
+        linked_sermons = [dict(r) for r in link_rows]
+        if linked_sermons:
             from sermon_coach_tools import get_sermon_review as _get_review_parsed
-            review = _get_review_parsed(companion_db, linked_sermon['id'])
+            review = _get_review_parsed(companion_db, linked_sermons[0]['id'])
         candidate_rows = conn.execute("""
-            SELECT sl.id, sl.sermon_id, sl.match_reason, s.title, s.bible_text_raw
+            SELECT sl.id, sl.sermon_id, sl.match_reason,
+                   s.title, s.bible_text_raw, s.preach_date
             FROM sermon_links sl
             JOIN sermons s ON s.id = sl.sermon_id
-            WHERE sl.link_status = 'candidate'
-              AND s.id IN (
-                  SELECT sl2.sermon_id FROM sermon_links sl2 WHERE sl2.session_id = ?
-              )
+            WHERE sl.link_status = 'candidate' AND sl.session_id = ?
+            ORDER BY s.preach_date DESC
         """, (session_id,)).fetchall()
         candidates = [dict(c) for c in candidate_rows]
     finally:
@@ -1031,20 +1038,26 @@ def study_session_view(session_id):
     card_phase_keys = [p["key"] for p in CARD_PHASES]
 
     if phase in card_phase_keys:
-        # Card mode (phases 1-5)
+        # Card mode (phases 1-5).
+        # Children inherit parent card content (read-only) per v1 spec: no
+        # per-child card overrides yet. Auto-resources, card responses, and the
+        # card-draft notepad all key off the parent when this is a child.
         phase_index = card_phase_keys.index(phase)
         card_def = CARD_PHASES[phase_index]
+        card_session = parent_session if is_child else session
+        card_session_id = card_session['id']
         resource_text = None
         study_bible_notes = None
         if card_def["auto_resource"] == "original_language":
-            resource_text = _get_original_language_text(session)
+            resource_text = _get_original_language_text(card_session)
         elif card_def["auto_resource"] == "study_bibles":
-            study_bible_notes = _get_study_bible_notes(session)
-        responses = companion_db.get_card_responses(session_id, phase)
+            study_bible_notes = _get_study_bible_notes(card_session)
+        responses = companion_db.get_card_responses(card_session_id, phase)
         # Check auto-saved draft first, then last submitted response
-        prefilled = companion_db.get_card_notepad(session_id, f"card_{phase}")
+        prefilled = companion_db.get_card_notepad(card_session_id, f"card_{phase}")
         if not prefilled:
             prefilled = responses[-1]["content"] if responses else ""
+        # Annotations + study-bible notepad stay per-child.
         annotations = companion_db.get_card_annotations(session_id, phase) if phase == "study_bibles" else []
         notepad = companion_db.get_card_notepad(session_id, phase) if phase == "study_bibles" else ""
         return render_template("study_session.html",
@@ -1058,9 +1071,12 @@ def study_session_view(session_id):
                                notepad=notepad,
                                messages=[],
                                outline=companion_db.get_outline_tree(session_id),
-                               linked_sermon=linked_sermon,
+                               linked_sermons=linked_sermons,
                                review=review,
-                               candidates=candidates)
+                               candidates=candidates,
+                               series_members=series_members,
+                               parent_session=parent_session,
+                               is_child=is_child)
     else:
         # Conversation mode (phase 6+)
         messages = companion_db.get_messages(session_id, limit=200)
@@ -1075,9 +1091,12 @@ def study_session_view(session_id):
                                notepad="",
                                messages=messages,
                                outline=companion_db.get_outline_tree(session_id),
-                               linked_sermon=linked_sermon,
+                               linked_sermons=linked_sermons,
                                review=review,
-                               candidates=candidates)
+                               candidates=candidates,
+                               series_members=series_members,
+                               parent_session=parent_session,
+                               is_child=is_child)
 
 
 @app.route("/study/session/<int:session_id>/discuss", methods=["POST"])
@@ -1103,12 +1122,21 @@ def study_discuss(session_id):
     )
 
 
+def _is_child_session(session_id):
+    """True if this session has a parent (i.e., it's a child in a series)."""
+    sess = companion_db.get_session(session_id)
+    return bool(sess and sess.get("parent_session_id"))
+
+
 @app.route("/study/session/<int:session_id>/card/next", methods=["POST"])
 def study_card_next(session_id):
     """Advance to the next card phase, saving any response."""
     session = companion_db.get_session(session_id)
     if not session:
         return "Session not found", 404
+    if session.get("parent_session_id"):
+        return ("Card writes are not allowed on child sessions; "
+                "their cards are inherited from the parent.", 403)
     phase = session.get("current_phase", "prayer")
     response_text = request.form.get("response", "").strip()
     if response_text:
@@ -1158,6 +1186,8 @@ def study_card_autosave(session_id):
     session = companion_db.get_session(session_id)
     if not session:
         return jsonify({"error": "not found"}), 404
+    if session.get("parent_session_id"):
+        return jsonify({"error": "child_session_read_only"}), 403
     phase = session.get("current_phase", "prayer")
     # Use notepad table for auto-save (upsert by session+phase)
     companion_db.save_card_notepad(session_id, phase=f"card_{phase}", content=content)
@@ -1413,6 +1443,124 @@ def study_clock_update(session_id):
         conn.commit()
         conn.close()
     return jsonify({"ok": True})
+
+
+@app.route("/study/session/<int:session_id>/split", methods=["POST"])
+def study_session_split(session_id):
+    """Split a session into a sermon series.
+
+    Body: {"plan": [{"position": 1, "title": "...", "verse_start": int, "verse_end": int}, ...]}
+
+    Position 1 narrows the parent. Positions 2..N create children.
+    All sermons currently linked to the parent are re-matched after the split.
+    """
+    payload = request.get_json(silent=True) or {}
+    plan = payload.get("plan") or []
+    if not plan:
+        return jsonify({"error": "empty_plan"}), 400
+
+    parent = companion_db.get_session(session_id)
+    if not parent:
+        return jsonify({"error": "session_not_found"}), 404
+    if companion_db.get_children(session_id):
+        return jsonify({"error": "already_split"}), 400
+    if parent.get("parent_session_id"):
+        return jsonify({"error": "cannot_split_a_child"}), 400
+
+    # Normalize + validate plan
+    try:
+        rows = []
+        for r in plan:
+            rows.append({
+                "position": int(r["position"]),
+                "title": str(r["title"]).strip(),
+                "verse_start": int(r["verse_start"]),
+                "verse_end": int(r["verse_end"]),
+            })
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "malformed_plan_row"}), 400
+    rows.sort(key=lambda r: r["position"])
+    positions = [r["position"] for r in rows]
+    if positions[0] != 1:
+        return jsonify({"error": "missing_position_1"}), 400
+    if positions != list(range(1, len(rows) + 1)):
+        return jsonify({"error": "non_contiguous_positions"}), 400
+    for r in rows:
+        if not r["title"] or r["verse_start"] < 1 or r["verse_end"] < r["verse_start"]:
+            return jsonify({"error": "invalid_row"}), 400
+
+    # Derive the book/chapter prefix from the parent's existing passage_ref
+    # (everything before the colon), so we don't need a book-id-to-name map.
+    book_chap_prefix = parent["passage_ref"].split(":")[0].rsplit(" ", 1)[0] + f" {parent['chapter']}"
+
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    conn = companion_db._conn()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        first = rows[0]
+        conn.execute(
+            "UPDATE sessions SET verse_start=?, verse_end=?, "
+            "series_position=1, series_title=?, passage_ref=?, updated_at=? WHERE id=?",
+            (first["verse_start"], first["verse_end"], first["title"],
+             f"{book_chap_prefix}:{first['verse_start']}-{first['verse_end']}",
+             now_iso, session_id),
+        )
+        child_ids = []
+        for r in rows[1:]:
+            cur = conn.execute(
+                "INSERT INTO sessions (passage_ref, book, chapter, verse_start, "
+                "verse_end, genre, parent_session_id, series_position, series_title, "
+                "current_phase, status, created_at, updated_at) "
+                # Children start at 'context' (first conversation phase) — they
+                # inherit the parent's card-phase work and the UI renders parent
+                # cards read-only, so card phases would be meaningless on them.
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'context', 'active', ?, ?)",
+                (f"{book_chap_prefix}:{r['verse_start']}-{r['verse_end']}",
+                 parent["book"], parent["chapter"], r["verse_start"], r["verse_end"],
+                 parent["genre"], session_id, r["position"], r["title"],
+                 now_iso, now_iso),
+            )
+            child_ids.append(cur.lastrowid)
+
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        conn.close()
+        raise
+    finally:
+        conn.close()
+
+    # Remap parent's sermon_links to the best-matching member (parent or
+    # one of the new children). Opens its own BEGIN IMMEDIATE transaction.
+    from sermon_matcher import remap_parent_links_after_split
+    remap_parent_links_after_split(companion_db, session_id)
+
+    children = companion_db.get_children(session_id)
+    return jsonify({
+        "parent_id": session_id,
+        "children": [{"id": c["id"], "position": c["series_position"],
+                       "title": c["series_title"]} for c in children],
+    })
+
+
+@app.route("/study/session/<int:session_id>/split/propose", methods=["POST"])
+def study_session_split_propose(session_id):
+    """Read the session's conversation and return an AI-extracted series plan."""
+    session = companion_db.get_session(session_id)
+    if not session:
+        return jsonify({"error": "session_not_found"}), 404
+    messages = companion_db.get_messages(session_id, limit=500)
+
+    from llm_client import AnthropicClient
+    llm = AnthropicClient(api_key=anthropic_api_key())
+    rows = propose_series_plan(messages, session_chapter=session["chapter"], llm=llm)
+    return jsonify({"plan": [
+        {"position": r.position, "title": r.title,
+         "verse_start": r.verse_start, "verse_end": r.verse_end}
+        for r in rows
+    ]})
 
 
 # ── Sermons Blueprint ────────────────────────────────────────────────────

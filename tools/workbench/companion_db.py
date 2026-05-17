@@ -314,6 +314,14 @@ class CompanionDB:
         existing_session_cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()}
         if 'last_homiletical_activity_at' not in existing_session_cols:
             conn.execute("ALTER TABLE sessions ADD COLUMN last_homiletical_activity_at TEXT")
+        # Series split: parent/child sessions for one-prep-many-sermons
+        if 'parent_session_id' not in existing_session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id INTEGER REFERENCES sessions(id)")
+        if 'series_position' not in existing_session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN series_position INTEGER")
+        if 'series_title' not in existing_session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN series_title TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)")
         existing_sermon_cols = {r[1] for r in conn.execute("PRAGMA table_info(sermons)").fetchall()}
         if 'transcript_segments' not in existing_sermon_cols:
             conn.execute("ALTER TABLE sermons ADD COLUMN transcript_segments TEXT")
@@ -447,6 +455,63 @@ class CompanionDB:
         row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
         conn.close()
         return dict(row) if row else None
+
+    def get_children(self, parent_id):
+        """Return child sessions of `parent_id` ordered by series_position."""
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM sessions WHERE parent_session_id = ? "
+                "ORDER BY series_position",
+                (parent_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_parent(self, child_id):
+        """Return the parent session row for `child_id`, or None if standalone."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT p.* FROM sessions c "
+                "JOIN sessions p ON p.id = c.parent_session_id "
+                "WHERE c.id = ?",
+                (child_id,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def get_series(self, session_id):
+        """Return parent + all children ordered by position, for any member id.
+
+        Returns [] if the session is standalone (no parent, no children).
+        """
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT parent_session_id FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return []
+            parent_id = row['parent_session_id'] if row['parent_session_id'] else session_id
+            # Check that parent_id is actually a parent (has children) — otherwise standalone.
+            children = conn.execute(
+                "SELECT 1 FROM sessions WHERE parent_session_id = ? LIMIT 1",
+                (parent_id,),
+            ).fetchone()
+            if not children:
+                return []
+            rows = conn.execute(
+                "SELECT * FROM sessions WHERE id = ? OR parent_session_id = ? "
+                "ORDER BY series_position",
+                (parent_id, parent_id),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
 
     def list_sessions(self, status=None):
         conn = self._conn()

@@ -61,7 +61,9 @@ class AnthropicClient:
     def call(self, prompt: str, schema: dict, *,
              max_tokens: int = 4096,
              system: Optional[str] = None,
-             track_usage: bool = True) -> dict:
+             track_usage: bool = True,
+             tool_name: str = 'emit_review',
+             tool_description: str = 'Emit the structured sermon review following the schema.') -> dict:
         """Call the model with a tool-use-enforced schema.
 
         Returns {output: dict, input_tokens: int, output_tokens: int, model: str}.
@@ -74,8 +76,8 @@ class AnthropicClient:
         try:
             messages = [{'role': 'user', 'content': prompt}]
             tools = [{
-                'name': 'emit_review',
-                'description': 'Emit the structured sermon review following the schema.',
+                'name': tool_name,
+                'description': tool_description,
                 'input_schema': schema,
             }]
             kwargs = dict(
@@ -83,7 +85,7 @@ class AnthropicClient:
                 max_tokens=max_tokens,
                 messages=messages,
                 tools=tools,
-                tool_choice={'type': 'tool', 'name': 'emit_review'},
+                tool_choice={'type': 'tool', 'name': tool_name},
             )
             if system:
                 kwargs['system'] = system

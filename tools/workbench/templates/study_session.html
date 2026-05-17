@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ session.passage_ref }} — Study</title>
-    <link rel="stylesheet" href="/static/study.css?v=7">
+    <link rel="stylesheet" href="/static/study.css?v=8">
 </head>
 <body data-mode="{{ mode }}">
     <div id="study-app">
@@ -19,16 +19,42 @@
                 <span class="phase-divider"></span>
                 <span class="phase-dot {% if mode == 'conversation' %}current{% else %}future{% endif %}"></span>
             </div>
-            {% if linked_sermon or candidates %}
-            <button type="button" class="tab-button" data-tab="review" onclick="document.getElementById('review-tab').scrollIntoView({behavior:'smooth'})">Review{% if linked_sermon and linked_sermon.ui_last_seen_version < linked_sermon.source_version %}<span class="tab-badge">&bull;</span>{% endif %}</button>
+            {% if linked_sermons or candidates %}
+            {% set _has_update = namespace(v=false) %}
+            {% for _s in linked_sermons %}{% if _s.ui_last_seen_version < _s.source_version %}{% set _has_update.v = true %}{% endif %}{% endfor %}
+            <button type="button" class="tab-button" data-tab="review" onclick="document.getElementById('review-tab').scrollIntoView({behavior:'smooth'})">Review{% if _has_update.v %}<span class="tab-badge">&bull;</span>{% endif %}</button>
             {% endif %}
             <span id="session-clock" onclick="studyClock.toggle()" title="Click to pause/resume">0m</span>
         </div>
 
         <div id="study-main">
 
+            {% if not series_members and not is_child %}
+            <div class="session-header-actions">
+              <button id="open-split-modal" class="secondary"
+                      data-session-id="{{ session.id }}">Split into series</button>
+            </div>
+            {% endif %}
+
+            {% if series_members %}
+            <nav class="series-breadcrumb" aria-label="Sermon series">
+              <span class="label">Series:</span>
+              {% for m in series_members %}
+                <a href="/study/session/{{ m.id }}" class="{% if m.id == session.id %}active{% endif %}">
+                  {{ m.series_position }}. {{ m.series_title or m.passage_ref }}
+                </a>{% if not loop.last %} · {% endif %}
+              {% endfor %}
+            </nav>
+            {% endif %}
+
             {% if mode == "card" %}
             <div id="card-area">
+                {% if is_child %}
+                <div class="parent-card-banner">
+                  From parent session: <a href="/study/session/{{ parent_session.id }}">{{ parent_session.passage_ref }}</a>
+                  (broad exegesis, read-only)
+                </div>
+                {% endif %}
                 {% include "partials/study_card.html" %}
             </div>
 
@@ -52,7 +78,7 @@
             </div>
             {% endif %}
 
-            {% if linked_sermon or candidates %}
+            {% if linked_sermons or candidates %}
             {% include 'partials/sermon_review_tab.html' %}
             {% endif %}
 
@@ -85,7 +111,9 @@
         </div>
     </div>
 
-    <script src="/static/study.js?v=5"></script>
+    {% include 'partials/series_split_modal.html' %}
+
+    <script src="/static/study.js?v=6"></script>
     <script src="/static/dictation.js?v=8"></script>
     <script>
         window.studySessionId = {{ session.id }};

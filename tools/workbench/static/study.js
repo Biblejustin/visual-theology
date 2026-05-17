@@ -850,3 +850,85 @@ Object.assign(window, {
     copyCardResponse: copyCardResponse,
     debouncedSaveNotepad: debouncedSaveNotepad
 });
+
+/* ── Split-into-series modal ────────────────────────────────────────────── */
+(function () {
+  const openBtn = document.getElementById('open-split-modal');
+  if (!openBtn) return;
+  const modal = document.getElementById('series-split-modal');
+  const tbody = modal.querySelector('#series-split-rows tbody');
+  const errBox = modal.querySelector('#series-split-error');
+  const loading = modal.querySelector('#series-split-loading');
+  const addBtn = modal.querySelector('#series-split-add');
+  const confirmBtn = modal.querySelector('#series-split-confirm');
+  const sessionId = openBtn.dataset.sessionId;
+
+  function renderRow(row) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="number" min="1" value="${row.position}" class="pos" style="width:3em"></td>
+      <td><input type="text" value="${(row.title || '').replace(/"/g, '&quot;')}" class="title"></td>
+      <td>
+        <input type="number" min="1" value="${row.verse_start}" class="vs" style="width:4em"> –
+        <input type="number" min="1" value="${row.verse_end}" class="ve" style="width:4em">
+      </td>
+      <td><button type="button" class="del">×</button></td>`;
+    tr.querySelector('.del').onclick = () => tr.remove();
+    return tr;
+  }
+
+  function readRows() {
+    return Array.from(tbody.querySelectorAll('tr')).map(tr => ({
+      position: parseInt(tr.querySelector('.pos').value, 10),
+      title: tr.querySelector('.title').value.trim(),
+      verse_start: parseInt(tr.querySelector('.vs').value, 10),
+      verse_end: parseInt(tr.querySelector('.ve').value, 10),
+    }));
+  }
+
+  openBtn.addEventListener('click', async () => {
+    tbody.innerHTML = '';
+    errBox.hidden = true;
+    loading.hidden = false;
+    modal.showModal();
+    try {
+      const resp = await fetch(`/study/session/${sessionId}/split/propose`, {method: 'POST'});
+      const body = await resp.json();
+      (body.plan || []).forEach(r => tbody.appendChild(renderRow(r)));
+      if (!body.plan || body.plan.length === 0) {
+        // Seed with one empty row
+        tbody.appendChild(renderRow({position: 1, title: '', verse_start: 1, verse_end: 1}));
+      }
+    } catch (e) {
+      errBox.textContent = 'Could not load proposal: ' + e.message;
+      errBox.hidden = false;
+      tbody.appendChild(renderRow({position: 1, title: '', verse_start: 1, verse_end: 1}));
+    } finally {
+      loading.hidden = true;
+    }
+  });
+
+  addBtn.addEventListener('click', () => {
+    const next = tbody.querySelectorAll('tr').length + 1;
+    tbody.appendChild(renderRow({position: next, title: '', verse_start: 1, verse_end: 1}));
+  });
+
+  confirmBtn.addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    errBox.hidden = true;
+    const plan = readRows();
+    const resp = await fetch(`/study/session/${sessionId}/split`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({plan}),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({error: 'unknown'}));
+      errBox.textContent = 'Split failed: ' + body.error;
+      errBox.hidden = false;
+      return;
+    }
+    modal.close();
+    window.location.reload();
+  });
+})();
