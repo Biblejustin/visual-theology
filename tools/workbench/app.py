@@ -1415,6 +1415,108 @@ def study_clock_update(session_id):
     return jsonify({"ok": True})
 
 
+@app.route("/study/session/<int:session_id>/split", methods=["POST"])
+def study_session_split(session_id):
+    """Split a session into a sermon series.
+
+    Body: {"plan": [{"position": 1, "title": "...", "verse_start": int, "verse_end": int}, ...]}
+
+    Position 1 narrows the parent. Positions 2..N create children.
+    All sermons currently linked to the parent are re-matched after the split.
+    """
+    payload = request.get_json(silent=True) or {}
+    plan = payload.get("plan") or []
+    if not plan:
+        return jsonify({"error": "empty_plan"}), 400
+
+    parent = companion_db.get_session(session_id)
+    if not parent:
+        return jsonify({"error": "session_not_found"}), 404
+    if companion_db.get_children(session_id):
+        return jsonify({"error": "already_split"}), 400
+    if parent.get("parent_session_id"):
+        return jsonify({"error": "cannot_split_a_child"}), 400
+
+    # Normalize + validate plan
+    try:
+        rows = []
+        for r in plan:
+            rows.append({
+                "position": int(r["position"]),
+                "title": str(r["title"]).strip(),
+                "verse_start": int(r["verse_start"]),
+                "verse_end": int(r["verse_end"]),
+            })
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "malformed_plan_row"}), 400
+    rows.sort(key=lambda r: r["position"])
+    positions = [r["position"] for r in rows]
+    if positions[0] != 1:
+        return jsonify({"error": "missing_position_1"}), 400
+    if positions != list(range(1, len(rows) + 1)):
+        return jsonify({"error": "non_contiguous_positions"}), 400
+    for r in rows:
+        if not r["title"] or r["verse_start"] < 1 or r["verse_end"] < r["verse_start"]:
+            return jsonify({"error": "invalid_row"}), 400
+
+    # Derive the book/chapter prefix from the parent's existing passage_ref
+    # (everything before the colon), so we don't need a book-id-to-name map.
+    book_chap_prefix = parent["passage_ref"].split(":")[0].rsplit(" ", 1)[0] + f" {parent['chapter']}"
+
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    conn = companion_db._conn()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        first = rows[0]
+        conn.execute(
+            "UPDATE sessions SET verse_start=?, verse_end=?, "
+            "series_position=1, series_title=?, passage_ref=?, updated_at=? WHERE id=?",
+            (first["verse_start"], first["verse_end"], first["title"],
+             f"{book_chap_prefix}:{first['verse_start']}-{first['verse_end']}",
+             now_iso, session_id),
+        )
+        child_ids = []
+        for r in rows[1:]:
+            cur = conn.execute(
+                "INSERT INTO sessions (passage_ref, book, chapter, verse_start, "
+                "verse_end, genre, parent_session_id, series_position, series_title, "
+                "current_phase, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'prayer', 'active', ?, ?)",
+                (f"{book_chap_prefix}:{r['verse_start']}-{r['verse_end']}",
+                 parent["book"], parent["chapter"], r["verse_start"], r["verse_end"],
+                 parent["genre"], session_id, r["position"], r["title"],
+                 now_iso, now_iso),
+            )
+            child_ids.append(cur.lastrowid)
+
+        # Find sermons currently linked to the parent and re-match them
+        linked_sermons = [row[0] for row in conn.execute(
+            "SELECT sermon_id FROM sermon_links WHERE session_id=? "
+            "AND link_status IN ('active','candidate')", (session_id,)
+        ).fetchall()]
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        conn.close()
+        raise
+    finally:
+        conn.close()
+
+    # Re-match outside the txn — each call opens its own BEGIN IMMEDIATE
+    from sermon_matcher import apply_match_decision_for_sermon
+    for sid in linked_sermons:
+        apply_match_decision_for_sermon(companion_db, sid)
+
+    children = companion_db.get_children(session_id)
+    return jsonify({
+        "parent_id": session_id,
+        "children": [{"id": c["id"], "position": c["series_position"],
+                       "title": c["series_title"]} for c in children],
+    })
+
+
 # ── Sermons Blueprint ────────────────────────────────────────────────────
 
 sermons_bp = Blueprint('sermons', __name__, url_prefix='/sermons')
