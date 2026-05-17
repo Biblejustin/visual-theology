@@ -221,6 +221,10 @@ def apply_match_decision_for_sermon(db, sermon_id: int) -> MatchDecision:
                    created_at, last_homiletical_activity_at
             FROM sessions
             WHERE book = ? AND chapter = ?
+              AND id NOT IN (
+                  SELECT parent_session_id FROM sessions
+                  WHERE parent_session_id IS NOT NULL
+              )
         """, (s_row[1], s_row[2])).fetchall()
         sessions = tuple(SessionInfo(
             id=r[0], book=r[1], chapter=r[2], verse_start=r[3], verse_end=r[4],
