@@ -998,31 +998,30 @@ def study_session_view(session_id):
     if not session:
         return redirect(url_for("study_index"))
 
-    # Sermon-coach integration: is there a linked sermon for this session?
-    linked_sermon = None
+    # Sermon-coach integration: which sermons are linked to this session?
+    linked_sermons = []
     review = None
     candidates = []
     conn = companion_db._conn()
     try:
-        link_row = conn.execute("""
+        link_rows = conn.execute("""
             SELECT s.*
             FROM sermons s
             JOIN sermon_links sl ON sl.sermon_id = s.id
             WHERE sl.session_id = ? AND sl.link_status = 'active'
-            LIMIT 1
-        """, (session_id,)).fetchone()
-        if link_row:
-            linked_sermon = dict(link_row)
+            ORDER BY s.preach_date DESC
+        """, (session_id,)).fetchall()
+        linked_sermons = [dict(r) for r in link_rows]
+        if linked_sermons:
             from sermon_coach_tools import get_sermon_review as _get_review_parsed
-            review = _get_review_parsed(companion_db, linked_sermon['id'])
+            review = _get_review_parsed(companion_db, linked_sermons[0]['id'])
         candidate_rows = conn.execute("""
-            SELECT sl.id, sl.sermon_id, sl.match_reason, s.title, s.bible_text_raw
+            SELECT sl.id, sl.sermon_id, sl.match_reason,
+                   s.title, s.bible_text_raw, s.preach_date
             FROM sermon_links sl
             JOIN sermons s ON s.id = sl.sermon_id
-            WHERE sl.link_status = 'candidate'
-              AND s.id IN (
-                  SELECT sl2.sermon_id FROM sermon_links sl2 WHERE sl2.session_id = ?
-              )
+            WHERE sl.link_status = 'candidate' AND sl.session_id = ?
+            ORDER BY s.preach_date DESC
         """, (session_id,)).fetchall()
         candidates = [dict(c) for c in candidate_rows]
     finally:
@@ -1059,7 +1058,7 @@ def study_session_view(session_id):
                                notepad=notepad,
                                messages=[],
                                outline=companion_db.get_outline_tree(session_id),
-                               linked_sermon=linked_sermon,
+                               linked_sermons=linked_sermons,
                                review=review,
                                candidates=candidates)
     else:
@@ -1076,7 +1075,7 @@ def study_session_view(session_id):
                                notepad="",
                                messages=messages,
                                outline=companion_db.get_outline_tree(session_id),
-                               linked_sermon=linked_sermon,
+                               linked_sermons=linked_sermons,
                                review=review,
                                candidates=candidates)
 
