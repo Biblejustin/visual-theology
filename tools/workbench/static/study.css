@@ -1555,3 +1555,48 @@ body {
   font-size: 13px;
   margin-bottom: 10px;
 }
+
+/* ── Split-into-series: trigger button + modal ─────────────────────────── */
+.session-header-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.session-header-actions .secondary {
+  background: var(--surface-2, #1b1d22);
+  color: var(--text-1, #e6e7ea);
+  border: 1px solid var(--border, #2a2d35);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.session-header-actions .secondary:hover {
+  background: var(--surface-3, #23262d);
+}
+
+.series-split-modal {
+  background: var(--surface-1, #15171c);
+  color: var(--text-1, #e6e7ea);
+  border: 1px solid var(--border, #2a2d35);
+  border-radius: 8px;
+  min-width: 480px;
+}
+.series-split-modal table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+.series-split-modal th, .series-split-modal td { padding: 4px 6px; text-align: left; }
+.series-split-modal input {
+  background: var(--surface-2, #1b1d22);
+  color: inherit;
+  border: 1px solid var(--border, #2a2d35);
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+.series-split-modal .error { color: #f7768e; padding: 6px 0; }
+.series-split-modal menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0;
+  margin-top: 12px;
+}
+.series-split-modal .hint { font-size: 13px; opacity: 0.75; }
