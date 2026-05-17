@@ -456,6 +456,63 @@ class CompanionDB:
         conn.close()
         return dict(row) if row else None
 
+    def get_children(self, parent_id):
+        """Return child sessions of `parent_id` ordered by series_position."""
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM sessions WHERE parent_session_id = ? "
+                "ORDER BY series_position",
+                (parent_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_parent(self, child_id):
+        """Return the parent session row for `child_id`, or None if standalone."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT p.* FROM sessions c "
+                "JOIN sessions p ON p.id = c.parent_session_id "
+                "WHERE c.id = ?",
+                (child_id,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def get_series(self, session_id):
+        """Return parent + all children ordered by position, for any member id.
+
+        Returns [] if the session is standalone (no parent, no children).
+        """
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT parent_session_id FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return []
+            parent_id = row['parent_session_id'] if row['parent_session_id'] else session_id
+            # Check that parent_id is actually a parent (has children) — otherwise standalone.
+            children = conn.execute(
+                "SELECT 1 FROM sessions WHERE parent_session_id = ? LIMIT 1",
+                (parent_id,),
+            ).fetchone()
+            if not children:
+                return []
+            rows = conn.execute(
+                "SELECT * FROM sessions WHERE id = ? OR parent_session_id = ? "
+                "ORDER BY series_position",
+                (parent_id, parent_id),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
     def list_sessions(self, status=None):
         conn = self._conn()
         if status:
