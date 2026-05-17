@@ -1510,11 +1510,6 @@ def study_session_split(session_id):
             )
             child_ids.append(cur.lastrowid)
 
-        # Find sermons currently linked to the parent and re-match them
-        linked_sermons = [row[0] for row in conn.execute(
-            "SELECT sermon_id FROM sermon_links WHERE session_id=? "
-            "AND link_status IN ('active','candidate')", (session_id,)
-        ).fetchall()]
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -1523,10 +1518,10 @@ def study_session_split(session_id):
     finally:
         conn.close()
 
-    # Re-match outside the txn — each call opens its own BEGIN IMMEDIATE
-    from sermon_matcher import apply_match_decision_for_sermon
-    for sid in linked_sermons:
-        apply_match_decision_for_sermon(companion_db, sid)
+    # Remap parent's sermon_links to the best-matching member (parent or
+    # one of the new children). Opens its own BEGIN IMMEDIATE transaction.
+    from sermon_matcher import remap_parent_links_after_split
+    remap_parent_links_after_split(companion_db, session_id)
 
     children = companion_db.get_children(session_id)
     return jsonify({

@@ -291,6 +291,134 @@ def apply_match_decision_for_sermon(db, sermon_id: int) -> MatchDecision:
         conn.close()
 
 
+def _passage_score(sermon_row, member_row) -> int:
+    """Score a sermon against a session/member row. 2=exact, 1=overlap, 0=none.
+
+    Both args are tuples/Row of (id, book, chapter, verse_start, verse_end) where
+    the sermon side uses its primary fields (book/chapter/verse_start/verse_end).
+    Sermon NULL verse_start or verse_end -> 0 against all members.
+    """
+    s_book, s_chap, s_vs, s_ve = (sermon_row[1], sermon_row[2],
+                                    sermon_row[3], sermon_row[4])
+    m_book, m_chap, m_vs, m_ve = (member_row[1], member_row[2],
+                                    member_row[3], member_row[4])
+    if s_book is None or m_book is None or s_book != m_book:
+        return 0
+    if s_chap is None or m_chap is None or s_chap != m_chap:
+        return 0
+    if s_vs is None or s_ve is None:
+        return 0
+    if m_vs is None or m_ve is None:
+        return 0
+    if s_vs == m_vs and s_ve == m_ve:
+        return 2
+    # Range overlap: [s_vs, s_ve] intersects [m_vs, m_ve]
+    if s_vs <= m_ve and m_vs <= s_ve:
+        return 1
+    return 0
+
+
+def remap_parent_links_after_split(db, parent_id: int) -> None:
+    """After a session split, re-target sermon_links pointing at the parent
+    so each link lands on the best-matching member (parent or one of the
+    new children). Children are preferred on ties (they are more specific).
+
+    - Reads ALL sermon_links rows on parent_id (any link_status).
+    - For each, scores the sermon against parent + each child using
+      _passage_score.
+    - If best score is 0, leaves the link on the parent.
+    - If best member is the parent, leaves the link untouched.
+    - If best member is a child, DELETEs the parent row and INSERT OR
+      IGNOREs an equivalent row on the child (preserves link_status,
+      link_source; appends a remap note to match_reason).
+    """
+    conn = db._conn()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        link_rows = conn.execute(
+            "SELECT sermon_id, session_id, link_status, link_source, match_reason "
+            "FROM sermon_links WHERE session_id = ?",
+            (parent_id,),
+        ).fetchall()
+        if not link_rows:
+            conn.execute("COMMIT")
+            return
+
+        # Parent + children, in that order — used for the child-preference tie-break.
+        member_rows = conn.execute(
+            "SELECT id, book, chapter, verse_start, verse_end FROM sessions "
+            "WHERE id = ? OR parent_session_id = ?",
+            (parent_id, parent_id),
+        ).fetchall()
+        # Sort so that parent comes first, children after — but for the tie-break
+        # we want children preferred, so we score and pick explicitly below.
+        parent_member = None
+        child_members = []
+        for m in member_rows:
+            if m[0] == parent_id:
+                parent_member = m
+            else:
+                child_members.append(m)
+        if parent_member is None:
+            # Parent was deleted between split and remap — bail out cleanly.
+            conn.execute("COMMIT")
+            return
+
+        from datetime import datetime
+        now = datetime.now().isoformat()
+
+        for link in link_rows:
+            sermon_id = link[0]
+            link_status = link[2]
+            link_source = link[3]
+            match_reason = link[4] or ''
+            s_row = conn.execute(
+                "SELECT id, book, chapter, verse_start, verse_end "
+                "FROM sermons WHERE id = ?",
+                (sermon_id,),
+            ).fetchone()
+            if not s_row:
+                continue
+
+            parent_score = _passage_score(s_row, parent_member)
+            best_child = None
+            best_child_score = 0
+            for child in child_members:
+                score = _passage_score(s_row, child)
+                if score > best_child_score:
+                    best_child_score = score
+                    best_child = child
+
+            # Ties: prefer child over parent (children are more specific).
+            if best_child_score == 0 and parent_score == 0:
+                # Nobody matches; leave on parent for Bryan to re-match.
+                continue
+            if best_child_score >= parent_score and best_child is not None:
+                # Move to child.
+                conn.execute(
+                    "DELETE FROM sermon_links WHERE sermon_id = ? AND session_id = ?",
+                    (sermon_id, parent_id),
+                )
+                new_reason = (match_reason +
+                              ' (remapped from parent after split)').strip()
+                conn.execute(
+                    "INSERT OR IGNORE INTO sermon_links "
+                    "(sermon_id, session_id, link_status, link_source, "
+                    " match_reason, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (sermon_id, best_child[0], link_status, link_source,
+                     new_reason, now),
+                )
+            # else: parent wins — leave untouched.
+
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+
+
 def dispatch_matching(db, limit: int = 50) -> int:
     """Match all unmatched sermons to prep sessions. Returns count matched."""
     conn = db._conn()
