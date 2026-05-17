@@ -314,6 +314,14 @@ class CompanionDB:
         existing_session_cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()}
         if 'last_homiletical_activity_at' not in existing_session_cols:
             conn.execute("ALTER TABLE sessions ADD COLUMN last_homiletical_activity_at TEXT")
+        # Series split: parent/child sessions for one-prep-many-sermons
+        if 'parent_session_id' not in existing_session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id INTEGER REFERENCES sessions(id)")
+        if 'series_position' not in existing_session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN series_position INTEGER")
+        if 'series_title' not in existing_session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN series_title TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)")
         existing_sermon_cols = {r[1] for r in conn.execute("PRAGMA table_info(sermons)").fetchall()}
         if 'transcript_segments' not in existing_sermon_cols:
             conn.execute("ALTER TABLE sermons ADD COLUMN transcript_segments TEXT")
