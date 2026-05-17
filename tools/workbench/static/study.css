@@ -324,7 +324,15 @@ body {
     margin-top: var(--topbar-h);
     flex: 1;
     display: flex;
+    flex-direction: column;
     overflow: hidden;
+}
+
+#study-content-row {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
 }
 
 /* ── Card Area ──────────────────────────────────────────────────────────── */
