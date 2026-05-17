@@ -51,6 +51,7 @@ from companion_agent import build_study_prompt, stream_study_response
 from session_analytics import SessionAnalytics
 from genre_map import get_genre
 from seed_questions import seed_question_bank
+from series_planner import propose_series_plan
 from app_secrets import sermonaudio_api_key, sermonaudio_broadcaster_id, anthropic_api_key
 
 try:
@@ -1515,6 +1516,24 @@ def study_session_split(session_id):
         "children": [{"id": c["id"], "position": c["series_position"],
                        "title": c["series_title"]} for c in children],
     })
+
+
+@app.route("/study/session/<int:session_id>/split/propose", methods=["POST"])
+def study_session_split_propose(session_id):
+    """Read the session's conversation and return an AI-extracted series plan."""
+    session = companion_db.get_session(session_id)
+    if not session:
+        return jsonify({"error": "session_not_found"}), 404
+    messages = companion_db.get_messages(session_id, limit=500)
+
+    from llm_client import AnthropicClient
+    llm = AnthropicClient(api_key=anthropic_api_key())
+    rows = propose_series_plan(messages, session_chapter=session["chapter"], llm=llm)
+    return jsonify({"plan": [
+        {"position": r.position, "title": r.title,
+         "verse_start": r.verse_start, "verse_end": r.verse_end}
+        for r in rows
+    ]})
 
 
 # ── Sermons Blueprint ────────────────────────────────────────────────────
