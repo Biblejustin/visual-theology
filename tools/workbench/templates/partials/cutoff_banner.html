@@ -35,12 +35,10 @@
 <div id="cutoff-banner-{{ cutoff_event_id }}" class="cutoff-banner" role="status">
   <div class="cutoff-banner-body">
     <span class="cutoff-banner-text">
-      {% if cutoff_event_type == 'weekend_lockout' %}
-        It's the weekend. Sermon work waits for Tuesday — the work the Lord provided this past week is enough for this Sunday.
-      {% elif cutoff_event_type == 'friday_3pm' %}
-        It's past Friday 3pm. The sermon prep window is closed for the week. Saturday belongs to family and rest.
-      {% else %}
-        It's past 5pm. Family time begins now. Sermon work can wait until tomorrow.
+      {% if cutoff_banner_message %}{{ cutoff_banner_message }}
+      {% elif cutoff_event_type == 'weekend_lockout' %}It's the weekend. Sermon work waits for Tuesday.
+      {% elif cutoff_event_type == 'friday_3pm' %}It's past Friday 3pm. The sermon prep window is closed.
+      {% else %}It's past 5pm. Family time begins now.
       {% endif %}
     </span>
     <button

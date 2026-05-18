@@ -310,6 +310,38 @@ def _is_sermon_work_page_load(req):
     return path.startswith("/companion/") or path.startswith("/study/")
 
 
+# Variable phrasings per cutoff type — rotate by day-of-year so the same
+# message doesn't fire two days running and habituate to background noise.
+# Per v2 §8.3 EF principle: predictable alarms get tuned out within 2 weeks.
+_CUTOFF_MESSAGES = {
+    'daily_5pm': [
+        "It's past 5pm. Family time begins now. Sermon work can wait until tomorrow.",
+        "Past 5pm. Olivia and the kids first. The work will be here tomorrow.",
+        "5pm. The family is more important than the manuscript right now.",
+    ],
+    'friday_3pm': [
+        "It's past Friday 3pm. The sermon prep window is closed for the week. Saturday belongs to family and rest.",
+        "Friday 3pm. Whatever is written is what you'll preach. Saturday is for the family.",
+        "Past Friday cutoff. Trust the work the Lord gave you this week.",
+    ],
+    'weekend_lockout': [
+        "It's the weekend. Sermon work waits for Tuesday — the work the Lord provided this past week is enough for this Sunday.",
+        "Saturday. The Lord made this day for rest. Sunday's sermon is what it is.",
+        "Weekend lockout. Open the manuscript Sunday morning at 6:30am for read-through — not before.",
+    ],
+}
+
+
+def _pick_cutoff_message(cutoff_type):
+    msgs = _CUTOFF_MESSAGES.get(cutoff_type)
+    if not msgs:
+        return None
+    # Rotate by day-of-year so adjacent days get different phrasings.
+    from datetime import datetime
+    idx = datetime.now().timetuple().tm_yday % len(msgs)
+    return msgs[idx]
+
+
 @app.context_processor
 def inject_cutoff_banner():
     """Advisory cutoff banner — notification + logging, no enforcement.
@@ -344,6 +376,7 @@ def inject_cutoff_banner():
         "cutoff_banner_active": True,
         "cutoff_event_id": event_id,
         "cutoff_event_type": cutoff_type,
+        "cutoff_banner_message": _pick_cutoff_message(cutoff_type),
     }
 
 
