@@ -287,6 +287,8 @@
         ensureStage();
         Stage.owner = owner;
         Stage.el.hidden = false;
+        // Signal to study.js's auto-pause: while we're recording, count it as activity.
+        window.dictationActive = true;
         Stage.startedAt = Date.now();
         Stage.statusEl.textContent = 'Recording';
         Stage.timeEl.textContent = '0:00';
@@ -306,6 +308,7 @@
         if (!Stage.el) return;
         Stage.el.hidden = true;
         Stage.owner = null;
+        window.dictationActive = false;
         stopStageTicker();
     }
 

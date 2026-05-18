@@ -15,26 +15,127 @@ var studyClock = {
     nudge2hShown: false,
     nudge4hShown: false,
 
+    // Activity / visibility tracking (task #53 timer fix).
+    lastActivityAt: 0,
+    autoPausedAt: 0,
+    autoPausedReason: null,
+    autoPausedElapsedSnapshot: 0,
+    IDLE_THRESHOLD_MS: 5 * 60 * 1000,
+    TAB_HIDDEN_THRESHOLD_MS: 30 * 1000,
+    GAP_NOTICE_MIN_SEC: 60,
+    _listenersBound: false,
+
     start: function(initialElapsed) {
         this.elapsed = initialElapsed || 0;
         this.startTime = Date.now() - (this.elapsed * 1000);
+        this.lastActivityAt = Date.now();
+        this._bindActivityListeners();
         if (this.interval) return;
         var self = this;
         this.interval = setInterval(function() {
             if (!self.paused) {
                 self.elapsed = Math.floor((Date.now() - self.startTime) / 1000);
                 self.checkWellbeing();
+                self._checkIdle();
             }
             self.updateDisplay();
         }, 1000);
         this.updateDisplay();
     },
 
+    _noteActivity: function() {
+        this.lastActivityAt = Date.now();
+        if (this.autoPausedReason === 'idle' && this.paused) {
+            this._autoResume();
+        }
+    },
+
+    _bindActivityListeners: function() {
+        if (this._listenersBound) return;
+        this._listenersBound = true;
+        var self = this;
+        ['keydown', 'mousedown', 'pointerdown', 'touchstart'].forEach(function(ev) {
+            document.addEventListener(ev, function() { self._noteActivity(); }, { passive: true, capture: true });
+        });
+        var lastMove = 0;
+        document.addEventListener('mousemove', function() {
+            var now = Date.now();
+            if (now - lastMove > 2000) { lastMove = now; self._noteActivity(); }
+        }, { passive: true });
+        document.addEventListener('scroll', function() { self._noteActivity(); }, { passive: true, capture: true });
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                self._scheduleTabHiddenPause();
+            } else if (self.autoPausedReason === 'tab_hidden' && self.paused) {
+                self._autoResume();
+            }
+        });
+    },
+
+    _scheduleTabHiddenPause: function() {
+        var self = this;
+        var snapshotHiddenAt = Date.now();
+        window.setTimeout(function() {
+            if (document.hidden &&
+                !self.paused &&
+                Date.now() - snapshotHiddenAt >= self.TAB_HIDDEN_THRESHOLD_MS - 100) {
+                self._autoPause('tab_hidden');
+            }
+        }, this.TAB_HIDDEN_THRESHOLD_MS);
+    },
+
+    _checkIdle: function() {
+        if (this.paused) return;
+        // Mic recording counts as activity (no auto-pause while dictating).
+        if (window.dictationActive) {
+            this.lastActivityAt = Date.now();
+            return;
+        }
+        if (Date.now() - this.lastActivityAt > this.IDLE_THRESHOLD_MS) {
+            this._autoPause('idle');
+        }
+    },
+
+    _autoPause: function(reason) {
+        if (this.paused) return;
+        this.paused = true;
+        this.autoPausedAt = Date.now();
+        this.autoPausedElapsedSnapshot = this.elapsed;
+        this.autoPausedReason = reason;
+        this.updateDisplay();
+        this.syncToServer();
+    },
+
+    _autoResume: function() {
+        var gapMs = Date.now() - this.autoPausedAt;
+        var gapSec = Math.max(0, Math.floor(gapMs / 1000));
+        var reason = this.autoPausedReason;
+        this.autoPausedAt = 0;
+        this.autoPausedReason = null;
+        this.startTime = Date.now() - (this.elapsed * 1000);
+        this.paused = false;
+        this.lastActivityAt = Date.now();
+        this.updateDisplay();
+        if (gapSec >= this.GAP_NOTICE_MIN_SEC) {
+            showGapNotice(reason, gapSec, this);
+        }
+    },
+
+    countTheGap: function(gapSec) {
+        this.elapsed += gapSec;
+        this.startTime = Date.now() - (this.elapsed * 1000);
+        this.updateDisplay();
+        this.syncToServer();
+    },
+
     toggle: function() {
         if (this.paused) {
+            this.autoPausedAt = 0;
+            this.autoPausedReason = null;
             // Resume — adjust startTime so elapsed stays correct
             this.startTime = Date.now() - (this.elapsed * 1000);
             this.paused = false;
+            this.lastActivityAt = Date.now();
         } else {
             this.paused = true;
         }
@@ -45,9 +146,14 @@ var studyClock = {
         var el = document.getElementById('session-clock');
         if (!el) return;
         var text = this.formatDuration(this.elapsed);
-        if (this.paused) text += ' (paused)';
+        if (this.paused) {
+            if (this.autoPausedReason === 'tab_hidden') text += ' (auto-paused: tab hidden)';
+            else if (this.autoPausedReason === 'idle') text += ' (auto-paused: idle)';
+            else text += ' (paused)';
+        }
         el.textContent = text;
         el.classList.toggle('paused', this.paused);
+        el.classList.toggle('auto-paused', !!this.autoPausedReason);
     },
 
     formatDuration: function(totalSeconds) {
@@ -76,6 +182,50 @@ var studyClock = {
         }).catch(function() {});
     }
 };
+
+/* ── Gap notice (auto-pause return prompt) ──────────────────────────────── */
+
+function showGapNotice(reason, gapSec, clock) {
+    var existing = document.getElementById('gap-notice');
+    if (existing) existing.remove();
+    var minutes = Math.round(gapSec / 60);
+    var label = reason === 'tab_hidden' ? 'tab was hidden' : 'you were idle';
+    var notice = document.createElement('div');
+    notice.id = 'gap-notice';
+    notice.setAttribute('role', 'status');
+    notice.innerHTML = ''
+      + '<style>'
+      + '#gap-notice {'
+      + '  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);'
+      + '  z-index: 4500; background: #2d2a26; color: #e8e1d0;'
+      + '  border: 1px solid #c9b88a; border-radius: 6px;'
+      + '  padding: 9px 14px; font-size: 13px;'
+      + '  font-family: -apple-system, system-ui, sans-serif;'
+      + '  display: flex; align-items: center; gap: 12px;'
+      + '  box-shadow: 0 4px 16px rgba(0,0,0,0.45);'
+      + '}'
+      + '#gap-notice button {'
+      + '  background: #c9b88a; color: #1a1814; border: none;'
+      + '  padding: 4px 10px; border-radius: 3px; font-size: 12px;'
+      + '  font-weight: 600; cursor: pointer;'
+      + '}'
+      + '#gap-notice button.ghost { background: transparent; color: #c9b88a; border: 1px solid #6a5a3a; }'
+      + '#gap-notice button:hover { background: #ebd9a7; }'
+      + '#gap-notice button.ghost:hover { background: #6a5a3a; color: #e8e1d0; }'
+      + '</style>'
+      + '<span>Welcome back. Clock was auto-paused for ' + minutes + ' min while ' + label + '. </span>'
+      + '<button type="button" data-gap-count>Count it (+' + minutes + ' min)</button>'
+      + '<button type="button" class="ghost" data-gap-dismiss>Skip</button>';
+    document.body.appendChild(notice);
+    notice.querySelector('[data-gap-count]').addEventListener('click', function() {
+        clock.countTheGap(gapSec);
+        notice.remove();
+    });
+    notice.querySelector('[data-gap-dismiss]').addEventListener('click', function() {
+        notice.remove();
+    });
+    window.setTimeout(function() { if (notice.parentNode) notice.remove(); }, 30000);
+}
 
 /* ── Wellbeing Nudge ────────────────────────────────────────────────────── */
 
