@@ -361,6 +361,45 @@ TOOL_DEFINITIONS = [
             "required": []
         }
     },
+    {
+        "name": "search_library",
+        "description": (
+            "Full-text search across the ENTIRE Logos library (all 4,652 books) using "
+            "Logos' own search engine and 6.6 GB inverted index. Returns the top hits with "
+            "resource title, author, type, hit count, and section info. Unlike "
+            "find_commentary_paragraph, this reaches background monographs, dictionaries, "
+            "encyclopedias, study bibles, etc. — anything indexed by Logos. "
+            "Use this for topical/background research (e.g. 'patronage in the Greco-Roman "
+            "world', 'imputation in Reformed theology', 'Adam-Christ typology'). For "
+            "verse-keyed commentary on a specific passage, find_commentary_paragraph is "
+            "still the right tool. "
+            "Query syntax supports Logos operators: quoted phrases (\"\"propitiation\"\"), "
+            "AND, OR, NOT, NEAR/N, WITHIN, BEFORE. Plain words are AND'd by default."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query. Plain words or Logos operators."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max documents to return (1-25). Default 10."
+                },
+                "resource_type": {
+                    "type": "string",
+                    "description": (
+                        "Optional Logos resource Type prefix to filter results. Common values: "
+                        "'text.monograph' (any monograph), 'text.monograph.commentary.bible' (verse "
+                        "commentaries), 'text.monograph.encyclopedia' (dictionaries), "
+                        "'text.monograph.study.bible' (study Bibles). Default: no filter."
+                    )
+                }
+            },
+            "required": ["query"]
+        }
+    },
 ]
 
 
@@ -396,6 +435,8 @@ def execute_tool(tool_name, tool_input, session_context):
             return _get_cross_reference_network(tool_input, session_context)
         elif tool_name == "get_passage_context":
             return _get_passage_context(tool_input, session_context)
+        elif tool_name == "search_library":
+            return _search_library(tool_input, session_context)
         # ── Coaching Bridge Tools ──────────────────────────────────────
         elif tool_name == "get_active_commitment":
             from coaching_bridge import load_active_commitment
@@ -448,6 +489,61 @@ def _read_bible_passage(tool_input):
     return {
         "reference": ref_str,
         "translations": results
+    }
+
+
+def _search_library(tool_input, session_context):
+    """Full-text search across the entire Logos library.
+
+    Wraps the LogosSearcher subprocess (Libronix.SearchEngine over the local
+    LibraryIndex). Returns the top hits with title, author, type, hit count.
+
+    Optionally filter by resource Type prefix (e.g. 'text.monograph' to only
+    return monographs). Snippet text is not yet included — the LLM gets enough
+    metadata to decide which resource to read, then can call read_article or
+    find_commentary_paragraph for the actual passage.
+    """
+    query = (tool_input.get("query") or "").strip()
+    if not query:
+        return {"error": "query is required"}
+    limit = max(1, min(int(tool_input.get("limit", 10)), 25))
+    type_prefix = (tool_input.get("resource_type") or "").strip() or None
+
+    try:
+        from logos_search import get_searcher
+        searcher = get_searcher()
+        # Over-fetch a bit when filtering by type, since the filter is post-hoc.
+        fetch_limit = limit * 3 if type_prefix else limit
+        result = searcher.search(query, limit=fetch_limit)
+    except Exception as e:
+        return {"error": f"search_failed: {type(e).__name__}: {e}"}
+
+    if not result.get("ok"):
+        return {"error": result.get("error", "unknown"),
+                "message": result.get("message", "")}
+
+    hits = result.get("hits") or []
+    if type_prefix:
+        hits = [h for h in hits if (h.get("type") or "").startswith(type_prefix)]
+    hits = hits[:limit]
+
+    return {
+        "query": query,
+        "results": [
+            {
+                "resource_id": h.get("resource_id"),
+                "title": h.get("title"),
+                "abbrev": h.get("abbrev"),
+                "authors": h.get("authors"),
+                "type": h.get("type"),
+                "filename": h.get("filename"),
+                "hit_count": h.get("hit_count"),
+                "section_offset": h.get("section_offset"),
+                "section_length": h.get("section_length"),
+            }
+            for h in hits
+        ],
+        "result_count": len(hits),
     }
 
 

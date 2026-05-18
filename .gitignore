@@ -62,3 +62,7 @@ external-resources/sefaria-cache/
 # _OCR-PREP-NOTES.md). The OCR text files derived from these live under
 # external-resources/{language}/ and are tracked.
 daniel/
+
+# LogosSearcher build artifacts
+tools/LogosSearcher/bin/
+tools/LogosSearcher/obj/
