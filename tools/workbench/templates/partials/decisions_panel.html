@@ -1,0 +1,98 @@
+<style>
+#decisions-panel {
+  background: #232019;
+  border: 1px solid #2d2a26;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-size: 13px;
+}
+#decisions-panel h3 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: #8a8275; margin: 0 0 10px; font-weight: 600;
+}
+#decisions-panel .dec-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 0; border-bottom: 1px solid #2d2a26;
+}
+#decisions-panel .dec-row:last-child { border-bottom: none; }
+#decisions-panel .dec-label {
+  flex: 0 0 130px; color: #8a8275; font-size: 12px;
+}
+#decisions-panel .dec-row.committed .dec-label { color: #c9b88a; }
+#decisions-panel .dec-row.committed .dec-label::before {
+  content: '✓ '; color: #88b878; font-weight: bold;
+}
+#decisions-panel .dec-value {
+  flex: 1; color: #e8e1d0; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#decisions-panel .dec-row.open .dec-value { color: #5a5447; font-style: italic; }
+#decisions-panel .dec-edit-btn, #decisions-panel .dec-clear-btn {
+  background: transparent; border: none; color: #8a6e3e;
+  font-size: 11px; cursor: pointer; padding: 1px 4px;
+}
+#decisions-panel .dec-edit-btn:hover, #decisions-panel .dec-clear-btn:hover { color: #c9b88a; }
+#decisions-panel .dec-form {
+  flex: 1; display: flex; gap: 6px; align-items: center;
+}
+#decisions-panel .dec-form input {
+  flex: 1; background: #1a1814; color: #e8e1d0;
+  border: 1px solid #3a3325; border-radius: 3px;
+  padding: 3px 6px; font-size: 12px; font-family: inherit;
+}
+#decisions-panel .dec-form button {
+  background: #8a6e3e; color: #1a1814; border: none;
+  padding: 3px 9px; border-radius: 3px; font-size: 11px;
+  font-weight: 500; cursor: pointer;
+}
+#decisions-panel .dec-summary {
+  font-size: 11px; color: #8a8275; margin-bottom: 8px;
+}
+</style>
+<div id="decisions-panel">
+  <h3>Decisions committed</h3>
+  <div class="dec-summary">
+    {{ committed_decisions|length }} of {{ committed_decisions|length + open_decision_keys|length }} committed
+  </div>
+
+  {% for d in committed_decisions %}
+  <div class="dec-row committed">
+    <div class="dec-label">{{ decision_labels.get(d.key, d.key) }}</div>
+    <div class="dec-value" title="{{ d.value }}">{{ d.value }}</div>
+    <button class="dec-edit-btn"
+      onclick="this.closest('.dec-row').querySelector('.dec-form').style.display='flex';this.style.display='none';this.nextElementSibling.style.display='none';this.previousElementSibling.style.display='none';"
+    >edit</button>
+    <button class="dec-clear-btn"
+      hx-post="/study/session/{{ session.id }}/decisions/clear"
+      hx-vals='{"key": "{{ d.key }}"}'
+      hx-target="#decisions-panel" hx-swap="outerHTML"
+    >clear</button>
+    <form class="dec-form" style="display:none;"
+      hx-post="/study/session/{{ session.id }}/decisions/set"
+      hx-target="#decisions-panel" hx-swap="outerHTML">
+      <input type="hidden" name="key" value="{{ d.key }}">
+      <input type="text" name="value" value="{{ d.value }}" autofocus>
+      <button type="submit">Save</button>
+    </form>
+  </div>
+  {% endfor %}
+
+  {% for k in open_decision_keys %}
+  <div class="dec-row open">
+    <div class="dec-label">{{ decision_labels.get(k, k) }}</div>
+    <div class="dec-value">— not yet committed</div>
+    <button class="dec-edit-btn"
+      onclick="this.closest('.dec-row').querySelector('.dec-form').style.display='flex';this.style.display='none';this.previousElementSibling.style.display='none';"
+    >set</button>
+    <form class="dec-form" style="display:none;"
+      hx-post="/study/session/{{ session.id }}/decisions/set"
+      hx-target="#decisions-panel" hx-swap="outerHTML">
+      <input type="hidden" name="key" value="{{ k }}">
+      <input type="text" name="value" placeholder="{{ decision_labels.get(k, k) }}…" autofocus>
+      <button type="submit">Commit</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>

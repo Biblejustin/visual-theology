@@ -71,6 +71,9 @@
             </div>
             {% else %}
             <div id="conversation-column">
+                {% if committed_decisions is defined and open_decision_keys is defined %}
+                {% include "partials/decisions_panel.html" %}
+                {% endif %}
                 <div id="conversation-thread">
                     {% for msg in messages %}
                     <div class="conv-message {{ msg.role }}">

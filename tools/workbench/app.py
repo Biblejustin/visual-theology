@@ -66,6 +66,19 @@ from accuser_detector import AccuserDetector
 from mentor_reference_store import MentorReferenceStore
 from pastor_feedback_store import PastorFeedbackStore
 from session_decisions import SessionDecisionStore, DECISION_KEYS
+
+
+_DECISION_LABEL_MAP = {
+    'subject':           'Subject',
+    'theme':             'Theme',
+    'ep_otm':            'EP / OTM',
+    'transition':        'Transition',
+    'exegetical_outline':'Exegetical Outline',
+    'fcf':               'FCF',
+    'hp_tht':            'HP / THT',
+    'purpose_statement': 'Purpose Statement',
+    'target_length_min': 'Target length (min)',
+}
 from genre_map import get_genre
 from seed_questions import seed_question_bank
 from series_planner import propose_series_plan
@@ -1092,6 +1105,46 @@ def api_list_session_decisions(session_id):
     })
 
 
+@app.route("/study/session/<int:session_id>/decisions/panel", methods=["GET"])
+def study_decisions_panel(session_id):
+    """Render-only fragment for HTMX swap after a decision update."""
+    if not session_decisions:
+        return ""
+    return render_template(
+        "partials/decisions_panel.html",
+        session=companion_db.get_session(session_id),
+        committed_decisions=session_decisions.list_decisions(session_id),
+        open_decision_keys=session_decisions.open_decision_keys(session_id),
+        decision_labels=_DECISION_LABEL_MAP,
+    )
+
+
+@app.route("/study/session/<int:session_id>/decisions/set", methods=["POST"])
+def study_decisions_set(session_id):
+    """HTMX form post — set a decision and swap back the panel."""
+    if not session_decisions:
+        abort(503)
+    key = (request.form.get("key") or "").strip()
+    value = (request.form.get("value") or "").strip()
+    if key and value:
+        try:
+            session_decisions.set_decision(session_id=session_id, key=key, value=value)
+        except ValueError:
+            pass
+    return study_decisions_panel(session_id)
+
+
+@app.route("/study/session/<int:session_id>/decisions/clear", methods=["POST"])
+def study_decisions_clear(session_id):
+    """HTMX form post — clear a decision and swap back the panel."""
+    if not session_decisions:
+        abort(503)
+    key = (request.form.get("key") or "").strip()
+    if key in DECISION_KEYS:
+        session_decisions.clear_decision(session_id, key)
+    return study_decisions_panel(session_id)
+
+
 @app.route("/study/feedback/new", methods=["GET"])
 def study_feedback_new():
     """Form for Bryan to capture feedback he received in person — Olivia,
@@ -1280,6 +1333,8 @@ def study_session_view(session_id):
         # Conversation mode (phase 6+)
         messages = companion_db.get_messages(session_id, limit=200)
         from phase_cluster_router import persona_for_phase as _persona_for_phase
+        committed_decisions = session_decisions.list_decisions(session_id) if session_decisions else []
+        open_decision_keys_list = session_decisions.open_decision_keys(session_id) if session_decisions else []
         return render_template("study_session.html",
                                session=session, mode="conversation",
                                persona=_persona_for_phase(phase),
@@ -1295,6 +1350,9 @@ def study_session_view(session_id):
                                linked_sermons=linked_sermons,
                                review=review,
                                candidates=candidates,
+                               committed_decisions=committed_decisions,
+                               open_decision_keys=open_decision_keys_list,
+                               decision_labels=_DECISION_LABEL_MAP,
                                series_members=series_members,
                                parent_session=parent_session,
                                is_child=is_child)
