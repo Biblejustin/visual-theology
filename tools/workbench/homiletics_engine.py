@@ -547,7 +547,8 @@ _BALANCE_TAG_SYSTEM = (
     "textual observation), application (so-what for the listener), illustration "
     "(a story, image, anecdote), christ_thread (a Christ-centered angle), "
     "question (rhetorical or pastoral), transition (connective tissue), other. "
-    "Use your best single label."
+    "Use your best single label. "
+    "Each node line starts with 'node_id=N:' — return that exact N as node_id."
 )
 
 
@@ -635,8 +636,8 @@ class BalanceGauger:
     def _retag(self, db, nodes: list):
         llm = self._llm or self._default_llm()
         prompt_lines = ['Outline nodes to classify:', '']
-        for i, n in enumerate(nodes):
-            prompt_lines.append(f"Node {i} [{n['id']}]: {n['content']}")
+        for n in nodes:
+            prompt_lines.append(f"node_id={n['id']}: {n['content']}")
         prompt = "\n".join(prompt_lines)
         result = llm.call(
             prompt=prompt, schema=_BALANCE_TAG_SCHEMA, system=_BALANCE_TAG_SYSTEM,
@@ -646,11 +647,15 @@ class BalanceGauger:
         if 'error' in result or 'output' not in result:
             return
         tags = result['output'].get('tags') or []
+        # Only accept tags whose node_id matches a real node we sent.
+        valid_ids = {n['id'] for n in nodes}
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
         conn = db._conn()
         try:
             for t in tags:
+                if t['node_id'] not in valid_ids:
+                    continue
                 conn.execute(
                     "UPDATE outline_nodes SET homiletical_type = ?, "
                     "homiletical_type_at = ? WHERE id = ?",

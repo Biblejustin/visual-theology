@@ -28,12 +28,12 @@ class _TaggingLLM:
     def __init__(self, by_content: dict):
         self._map = by_content
     def call(self, prompt, schema, **kwargs):
-        # Parse 'Node N [id]: <content>' lines from the prompt and assign tags from the map.
+        # Parse 'node_id=N: <content>' lines from the prompt and assign tags from the map.
         import re
         tags = []
-        for m in re.finditer(r'^Node (\d+) \[(\d+)\]: (.+)$', prompt, re.MULTILINE):
-            node_id = int(m.group(2))
-            content = m.group(3)
+        for m in re.finditer(r'^node_id=(\d+): (.+)$', prompt, re.MULTILINE):
+            node_id = int(m.group(1))
+            content = m.group(2)
             tag = self._map.get(content, 'other')
             tags.append({'node_id': node_id, 'homiletical_type': tag})
         return {'output': {'tags': tags}, 'input_tokens': 0,
