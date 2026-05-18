@@ -79,11 +79,98 @@ def test_is_past_daily_cutoff_morning_is_false(sa):
 
 def test_is_past_daily_cutoff_respects_env_override_tz(sa, monkeypatch):
     """LOGOS_LOCAL_TZ env var lets the system override the auto-detected TZ."""
-    # Pacific time at 22:00 UTC = 3pm PDT (May, UTC-7) → NOT past cutoff
-    # Eastern time at 22:00 UTC = 6pm EDT (May, UTC-4) → past cutoff
     now_utc = datetime(2026, 5, 18, 22, 0, tzinfo=timezone.utc)
     assert sa.is_past_daily_cutoff(now_utc=now_utc, tz=ZoneInfo("America/Los_Angeles")) is False
     assert sa.is_past_daily_cutoff(now_utc=now_utc, tz=ZoneInfo("America/New_York")) is True
+
+
+# ── Friday 3pm cutoff ─────────────────────────────────────────────────────
+
+def test_friday_3pm_thursday_evening_is_false(sa):
+    now_utc = datetime(2026, 5, 22, 1, 0, tzinfo=timezone.utc)  # Thu 8pm CDT
+    assert sa.is_past_friday_3pm(now_utc=now_utc, tz=CENTRAL) is False
+
+
+def test_friday_3pm_friday_at_2pm_is_false(sa):
+    # 2026-05-22 is Friday. 2pm CDT = 19:00 UTC
+    now_utc = datetime(2026, 5, 22, 19, 0, tzinfo=timezone.utc)
+    assert sa.is_past_friday_3pm(now_utc=now_utc, tz=CENTRAL) is False
+
+
+def test_friday_3pm_friday_at_3pm_is_true(sa):
+    now_utc = datetime(2026, 5, 22, 20, 0, tzinfo=timezone.utc)  # Fri 3pm CDT
+    assert sa.is_past_friday_3pm(now_utc=now_utc, tz=CENTRAL) is True
+
+
+def test_friday_3pm_friday_at_8pm_is_true(sa):
+    now_utc = datetime(2026, 5, 23, 1, 0, tzinfo=timezone.utc)  # Fri 8pm CDT
+    assert sa.is_past_friday_3pm(now_utc=now_utc, tz=CENTRAL) is True
+
+
+def test_friday_3pm_saturday_is_false(sa):
+    # Saturday gets weekend_lockout precedence; Friday-3pm is Friday-only.
+    now_utc = datetime(2026, 5, 23, 22, 0, tzinfo=timezone.utc)  # Sat 5pm CDT
+    assert sa.is_past_friday_3pm(now_utc=now_utc, tz=CENTRAL) is False
+
+
+# ── Weekend lockout ───────────────────────────────────────────────────────
+
+def test_weekend_lockout_saturday_morning_is_true(sa):
+    now_utc = datetime(2026, 5, 23, 14, 0, tzinfo=timezone.utc)  # Sat 9am CDT
+    assert sa.is_weekend_lockout(now_utc=now_utc, tz=CENTRAL) is True
+
+
+def test_weekend_lockout_saturday_night_is_true(sa):
+    now_utc = datetime(2026, 5, 24, 4, 0, tzinfo=timezone.utc)  # Sat 11pm CDT
+    assert sa.is_weekend_lockout(now_utc=now_utc, tz=CENTRAL) is True
+
+
+def test_weekend_lockout_sunday_6am_is_true(sa):
+    now_utc = datetime(2026, 5, 24, 11, 0, tzinfo=timezone.utc)  # Sun 6am CDT
+    assert sa.is_weekend_lockout(now_utc=now_utc, tz=CENTRAL) is True
+
+
+def test_weekend_lockout_sunday_630am_is_false(sa):
+    # Sunday 6:30am CDT = lockout lifts for read-through.
+    now_utc = datetime(2026, 5, 24, 11, 30, tzinfo=timezone.utc)
+    assert sa.is_weekend_lockout(now_utc=now_utc, tz=CENTRAL) is False
+
+
+def test_weekend_lockout_sunday_10am_is_false(sa):
+    now_utc = datetime(2026, 5, 24, 15, 0, tzinfo=timezone.utc)  # Sun 10am CDT
+    assert sa.is_weekend_lockout(now_utc=now_utc, tz=CENTRAL) is False
+
+
+def test_weekend_lockout_friday_evening_is_false(sa):
+    now_utc = datetime(2026, 5, 23, 1, 0, tzinfo=timezone.utc)  # Fri 8pm CDT
+    assert sa.is_weekend_lockout(now_utc=now_utc, tz=CENTRAL) is False
+
+
+def test_weekend_lockout_monday_is_false(sa):
+    now_utc = datetime(2026, 5, 25, 14, 0, tzinfo=timezone.utc)  # Mon 9am CDT
+    assert sa.is_weekend_lockout(now_utc=now_utc, tz=CENTRAL) is False
+
+
+# ── active_cutoff_type precedence ─────────────────────────────────────────
+
+def test_active_cutoff_type_weekend_wins_over_5pm(sa):
+    now_utc = datetime(2026, 5, 23, 23, 0, tzinfo=timezone.utc)  # Sat 6pm CDT
+    assert sa.active_cutoff_type(now_utc=now_utc, tz=CENTRAL) == 'weekend_lockout'
+
+
+def test_active_cutoff_type_friday_3pm_wins_over_5pm(sa):
+    now_utc = datetime(2026, 5, 22, 23, 0, tzinfo=timezone.utc)  # Fri 6pm CDT
+    assert sa.active_cutoff_type(now_utc=now_utc, tz=CENTRAL) == 'friday_3pm'
+
+
+def test_active_cutoff_type_daily_5pm_on_tuesday(sa):
+    now_utc = datetime(2026, 5, 19, 23, 0, tzinfo=timezone.utc)  # Tue 6pm CDT
+    assert sa.active_cutoff_type(now_utc=now_utc, tz=CENTRAL) == 'daily_5pm'
+
+
+def test_active_cutoff_type_returns_none_when_no_cutoff(sa):
+    now_utc = datetime(2026, 5, 19, 15, 0, tzinfo=timezone.utc)  # Tue 10am CDT
+    assert sa.active_cutoff_type(now_utc=now_utc, tz=CENTRAL) is None
 
 
 # ── Schema ──────────────────────────────────────────────────────────────────
@@ -203,7 +290,7 @@ def _make_companion_session(c, passage='Romans 1:18-23'):
 
 def test_companion_session_past_cutoff_logs_event(client, monkeypatch):
     c, sa = client
-    monkeypatch.setattr(sa, 'is_past_daily_cutoff', lambda now_utc=None: True)
+    monkeypatch.setattr(sa, 'active_cutoff_type', lambda now_utc=None, tz=None: 'daily_5pm')
     sid = _make_companion_session(c)
     r = c.get(f'/companion/session/{sid}')
     assert r.status_code == 200
@@ -217,7 +304,7 @@ def test_companion_session_past_cutoff_logs_event(client, monkeypatch):
 
 def test_companion_session_before_cutoff_does_not_log(client, monkeypatch):
     c, sa = client
-    monkeypatch.setattr(sa, 'is_past_daily_cutoff', lambda now_utc=None: False)
+    monkeypatch.setattr(sa, 'active_cutoff_type', lambda now_utc=None, tz=None: None)
     sid = _make_companion_session(c)
     c.get(f'/companion/session/{sid}')
     conn = sa._conn()
@@ -228,7 +315,7 @@ def test_companion_session_before_cutoff_does_not_log(client, monkeypatch):
 
 def test_study_index_past_cutoff_logs_event(client, monkeypatch):
     c, sa = client
-    monkeypatch.setattr(sa, 'is_past_daily_cutoff', lambda now_utc=None: True)
+    monkeypatch.setattr(sa, 'active_cutoff_type', lambda now_utc=None, tz=None: 'daily_5pm')
     r = c.get('/study/')
     assert r.status_code == 200
     conn = sa._conn()
@@ -240,7 +327,7 @@ def test_study_index_past_cutoff_logs_event(client, monkeypatch):
 
 def test_non_sermon_route_does_not_log(client, monkeypatch):
     c, sa = client
-    monkeypatch.setattr(sa, 'is_past_daily_cutoff', lambda now_utc=None: True)
+    monkeypatch.setattr(sa, 'active_cutoff_type', lambda now_utc=None, tz=None: 'daily_5pm')
     c.get('/library')
     conn = sa._conn()
     events = conn.execute("SELECT * FROM cutoff_events").fetchall()
@@ -250,7 +337,7 @@ def test_non_sermon_route_does_not_log(client, monkeypatch):
 
 def test_htmx_fragment_request_does_not_log(client, monkeypatch):
     c, sa = client
-    monkeypatch.setattr(sa, 'is_past_daily_cutoff', lambda now_utc=None: True)
+    monkeypatch.setattr(sa, 'active_cutoff_type', lambda now_utc=None, tz=None: 'daily_5pm')
     sid = _make_companion_session(c)
     # Drain any event from the page-load make_session itself
     conn = sa._conn()
@@ -267,7 +354,7 @@ def test_htmx_fragment_request_does_not_log(client, monkeypatch):
 
 def test_throttle_prevents_duplicate_logs_within_window(client, monkeypatch):
     c, sa = client
-    monkeypatch.setattr(sa, 'is_past_daily_cutoff', lambda now_utc=None: True)
+    monkeypatch.setattr(sa, 'active_cutoff_type', lambda now_utc=None, tz=None: 'daily_5pm')
     sid = _make_companion_session(c)
     c.get(f'/companion/session/{sid}')
     c.get(f'/companion/session/{sid}')

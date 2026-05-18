@@ -289,26 +289,39 @@ def _is_sermon_work_page_load(req):
 
 @app.context_processor
 def inject_cutoff_banner():
-    """Advisory cutoff banner (Cycle 1): notification + logging, no enforcement.
+    """Advisory cutoff banner — notification + logging, no enforcement.
 
-    When sermon work surfaces are accessed past 5pm local, log the access (throttled
-    to one event per route per 15 min) and surface a dismissible banner. No disable,
-    no lockout — this is calibration to measure override frequency before enforcement.
+    Three cutoff types in precedence order: weekend_lockout > friday_3pm > daily_5pm.
+    The most-specific active cutoff wins so the banner copy matches what's actually
+    closing. Throttled to one event per (route, cutoff_type) per 15 min.
     """
     if not study_analytics:
         return {}
     if not _is_sermon_work_page_load(request):
         return {}
-    if not study_analytics.is_past_daily_cutoff():
+    cutoff_type = study_analytics.active_cutoff_type()
+    if cutoff_type is None:
         return {}
-    recent = study_analytics.get_recent_cutoff_event(request.path, within_minutes=15)
-    if recent and recent["dismissed"]:
+    # Defensive: if the cutoff_events table is missing (e.g., a test DB that
+    # wasn't init'd), degrade silently rather than 500-ing every page render.
+    try:
+        recent = study_analytics.get_recent_cutoff_event(request.path, within_minutes=15)
+    except Exception:
         return {}
-    if recent:
+    # Re-throttling: if a recent event exists AND it's the same cutoff type,
+    # honor dismiss; otherwise log a new event so transitioning between types
+    # (e.g. Friday 3pm → Saturday weekend) re-surfaces the correct banner.
+    if recent and recent.get("cutoff_type") == cutoff_type and recent["dismissed"]:
+        return {}
+    if recent and recent.get("cutoff_type") == cutoff_type:
         event_id = recent["id"]
     else:
-        event_id = study_analytics.log_cutoff_event(request.path, "daily_5pm")
-    return {"cutoff_banner_active": True, "cutoff_event_id": event_id}
+        event_id = study_analytics.log_cutoff_event(request.path, cutoff_type)
+    return {
+        "cutoff_banner_active": True,
+        "cutoff_event_id": event_id,
+        "cutoff_event_type": cutoff_type,
+    }
 
 
 @app.route("/api/cutoff-events/<int:event_id>/dismiss", methods=["POST"])

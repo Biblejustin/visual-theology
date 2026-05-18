@@ -102,14 +102,44 @@ class SessionAnalytics:
     # ── Cutoff events (Cycle 1 advisory) ─────────────────────────────────
 
     def is_past_daily_cutoff(self, now_utc=None, cutoff_hour=DAILY_CUTOFF_HOUR, tz=None):
-        """True if it's at or past the daily cutoff in Bryan's local time.
-
-        Defaults to LOCAL_TZ (system-local; see _resolve_local_tz). Tests pass
-        an explicit `tz` to make assertions deterministic across machines.
-        """
+        """True if it's at or past the daily cutoff in Bryan's local time."""
         now_utc = now_utc or datetime.now(timezone.utc)
         local = now_utc.astimezone(tz or LOCAL_TZ)
         return local.hour >= cutoff_hour
+
+    def is_past_friday_3pm(self, now_utc=None, tz=None):
+        """True if local time is Friday at or after 3pm (sermon-prep window closed)."""
+        now_utc = now_utc or datetime.now(timezone.utc)
+        local = now_utc.astimezone(tz or LOCAL_TZ)
+        # Python weekday(): Monday=0 … Friday=4 … Sunday=6
+        return local.weekday() == 4 and local.hour >= 15
+
+    def is_weekend_lockout(self, now_utc=None, tz=None):
+        """True during the weekend lockout window: all of Saturday plus Sunday
+        before 6:30am. Sunday 6:30am+ is read-through / preaching / pastoral
+        time — not a sermon-prep violation."""
+        now_utc = now_utc or datetime.now(timezone.utc)
+        local = now_utc.astimezone(tz or LOCAL_TZ)
+        wd = local.weekday()
+        if wd == 5:  # Saturday all day
+            return True
+        if wd == 6:  # Sunday before 6:30am
+            return local.hour < 6 or (local.hour == 6 and local.minute < 30)
+        return False
+
+    def active_cutoff_type(self, now_utc=None, tz=None):
+        """Return the highest-precedence active cutoff type, or None.
+
+        Precedence: weekend_lockout > friday_3pm > daily_5pm. The most-specific
+        cutoff wins so the banner copy matches what's actually closing.
+        """
+        if self.is_weekend_lockout(now_utc=now_utc, tz=tz):
+            return 'weekend_lockout'
+        if self.is_past_friday_3pm(now_utc=now_utc, tz=tz):
+            return 'friday_3pm'
+        if self.is_past_daily_cutoff(now_utc=now_utc, tz=tz):
+            return 'daily_5pm'
+        return None
 
     def log_cutoff_event(self, route, cutoff_type, session_id=None):
         conn = self._conn()
