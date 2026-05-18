@@ -1133,8 +1133,10 @@ def study_session_view(session_id):
         # Annotations + study-bible notepad stay per-child.
         annotations = companion_db.get_card_annotations(session_id, phase) if phase == "study_bibles" else []
         notepad = companion_db.get_card_notepad(session_id, phase) if phase == "study_bibles" else ""
+        from phase_cluster_router import persona_for_phase as _persona_for_phase
         return render_template("study_session.html",
                                session=session, mode="card",
+                               persona=_persona_for_phase(phase),
                                card=card_def, phase_index=phase_index,
                                total_phases=len(CARD_PHASES),
                                resource_text=resource_text,
@@ -1153,8 +1155,10 @@ def study_session_view(session_id):
     else:
         # Conversation mode (phase 6+)
         messages = companion_db.get_messages(session_id, limit=200)
+        from phase_cluster_router import persona_for_phase as _persona_for_phase
         return render_template("study_session.html",
                                session=session, mode="conversation",
+                               persona=_persona_for_phase(phase),
                                card=None, phase_index=5,
                                total_phases=len(CARD_PHASES),
                                resource_text=None,

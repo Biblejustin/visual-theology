@@ -13,6 +13,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from companion_tools import TOOL_DEFINITIONS, execute_tool
 from voice_constants import IDENTITY_CORE, HOMILETICAL_TRADITION, VOICE_GUARDRAILS
 from app_secrets import anthropic_api_key
+from phase_cluster_router import persona_for_phase
+from persona_tools import tool_defs_for_persona
 
 # ── Phase Descriptions ────────────────────────────────────────────────────
 
@@ -672,12 +674,70 @@ STUDY_TA_RETIRED_TOOLS = frozenset({
 
 def study_ta_tool_defs():
     """Tool definitions for the Study TA — TOOL_DEFINITIONS minus the
-    5 retired generators. Returns the standard Anthropic API shape."""
+    5 retired generators. Returns the standard Anthropic API shape.
+
+    Retained for backward compatibility with existing tests. New code
+    should call `persona_tools.tool_defs_for_persona(persona)` via the
+    phase-cluster router.
+    """
     return [
         {'name': t['name'], 'description': t['description'], 'input_schema': t['input_schema']}
         for t in TOOL_DEFINITIONS
         if t['name'] not in STUDY_TA_RETIRED_TOOLS
     ]
+
+
+def select_persona_prompt(*, persona, passage, genre, session_elapsed_seconds,
+                          current_phase, outline_summary, card_work_summary,
+                          coaching_context,
+                          prior_phase_summary='',
+                          sermon_coach_pattern_summary='',
+                          manuscript='', estimated_minutes=None,
+                          active_commitment='', recent_coach_one_changes='',
+                          prior_overruns_summary=''):
+    """Build the system prompt for the active persona. Returns None for silent.
+
+    Imports are local to avoid a circular import: persona_prompts imports
+    HOMILETICAL_GUARDRAILS + _format_time from companion_agent.
+    """
+    if persona == 'silent':
+        return None
+    from persona_prompts import (
+        build_research_partner_prompt,
+        build_composing_partner_prompt,
+        build_editing_partner_prompt,
+    )
+    if persona == 'composing':
+        return build_composing_partner_prompt(
+            passage=passage, genre=genre,
+            session_elapsed_seconds=session_elapsed_seconds,
+            current_phase=current_phase,
+            outline_summary=outline_summary,
+            card_work_summary=card_work_summary,
+            coaching_context=coaching_context,
+            prior_phase_summary=prior_phase_summary,
+            sermon_coach_pattern_summary=sermon_coach_pattern_summary,
+        )
+    if persona == 'editing':
+        return build_editing_partner_prompt(
+            passage=passage, genre=genre,
+            session_elapsed_seconds=session_elapsed_seconds,
+            current_phase=current_phase,
+            manuscript=manuscript,
+            estimated_minutes=estimated_minutes,
+            active_commitment=active_commitment,
+            recent_coach_one_changes=recent_coach_one_changes,
+            prior_overruns_summary=prior_overruns_summary,
+        )
+    # default: research
+    return build_research_partner_prompt(
+        passage=passage, genre=genre,
+        session_elapsed_seconds=session_elapsed_seconds,
+        current_phase=current_phase,
+        outline_summary=outline_summary,
+        card_work_summary=card_work_summary,
+        coaching_context=coaching_context,
+    )
 
 
 def stream_study_response(session_id, user_message, db, analytics=None,
@@ -735,15 +795,26 @@ def stream_study_response(session_id, user_message, db, analytics=None,
     insights = load_coaching_insights(db)
     coaching_context = build_coaching_prompt_section(commitment, insights)
 
-    # Build system prompt
-    system_prompt = build_study_prompt(
+    # Build system prompt via the phase-cluster router (Task 5 of three-persona plan)
+    persona = persona_for_phase(session['current_phase'])
+    system_prompt = select_persona_prompt(
+        persona=persona,
         passage=session['passage_ref'],
         genre=session['genre'],
         session_elapsed_seconds=session['total_elapsed_seconds'],
+        current_phase=session['current_phase'],
         outline_summary=outline_summary,
         card_work_summary=card_work_summary,
         coaching_context=coaching_context,
+        # Data-layer fields land in a separate plan; defaults preserved meanwhile.
     )
+    if system_prompt is None:
+        # Silent persona — forward-compat guard. Today /study/'s catch-all
+        # 'study' phase routes to research; this branch is unreachable in
+        # current data but protects against future silent-phase routing
+        # into stream_study_response without a UI guard upstream.
+        yield _sse_event('error', {'message': 'No chat surface in silent phase.'})
+        return
 
     # Build messages from FULL conversation history (not phase-scoped)
     all_messages = db.get_messages(session_id, limit=100)
@@ -780,7 +851,7 @@ def stream_study_response(session_id, user_message, db, analytics=None,
         'db': db,
     }
 
-    tool_defs = study_ta_tool_defs()
+    tool_defs = tool_defs_for_persona(persona)
 
     # Streaming loop with tool use
     full_response_text = ''
