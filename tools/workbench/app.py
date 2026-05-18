@@ -63,6 +63,7 @@ from companion_agent import stream_companion_response, PHASE_DESCRIPTIONS
 from companion_agent import build_study_prompt, stream_study_response
 from session_analytics import SessionAnalytics
 from accuser_detector import AccuserDetector
+from mentor_reference_store import MentorReferenceStore
 from genre_map import get_genre
 from seed_questions import seed_question_bank
 from series_planner import propose_series_plan
@@ -219,6 +220,7 @@ def safe_assistant_filter(content):
 companion_db = None
 study_analytics = None
 accuser_detector = None
+mentor_store = None
 
 # Module-level cache for get_db() — tests reset this via `_db_instance = None`
 # to force re-creation after monkeypatching COMPANION_DB_PATH.
@@ -246,7 +248,7 @@ def startup():
     db.init_db()
     init_batch_reader()
     # Initialize companion DB
-    global companion_db, study_analytics, accuser_detector
+    global companion_db, study_analytics, accuser_detector, mentor_store
     db_path = os.environ.get("COMPANION_DB_PATH", str(TOOLS_DIR / "workbench" / "companion.db"))
     companion_db = CompanionDB(db_path)
     companion_db.init_db()
@@ -256,6 +258,9 @@ def startup():
     # Initialize accuser-voice detector (Cycle 2a: detection-only)
     accuser_detector = AccuserDetector(db_path)
     accuser_detector.init_db()
+    # Initialize mentor reference store (Cycle 2c: substrate)
+    mentor_store = MentorReferenceStore(db_path)
+    mentor_store.init_db()
     # Seed question bank if empty
     if not companion_db.get_questions('prayer'):
         seed_question_bank(companion_db)
