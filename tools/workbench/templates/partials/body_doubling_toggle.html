@@ -1,0 +1,67 @@
+<style>
+/* Body-doubling mode — "Olivia at the table" or peer co-presence.
+   Reduces visual intensity so the system feels like a quiet companion
+   rather than a demanding interface. Persists in localStorage. */
+.body-doubling-toggle {
+  position: fixed;
+  bottom: 14px;
+  right: 14px;
+  z-index: 2000;
+  background: rgba(35, 32, 25, 0.85);
+  color: #b8af9d;
+  border: 1px solid #2d2a26;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: opacity 0.2s ease;
+  opacity: 0.55;
+  backdrop-filter: blur(4px);
+}
+.body-doubling-toggle:hover { opacity: 0.95; }
+.body-doubling-toggle.on {
+  background: #3a3325;
+  color: #ebd9a7;
+  border-color: #6a5a3a;
+  opacity: 0.85;
+}
+
+/* When body-doubling is active, calm the UI. */
+body.body-doubling .persona-indicator-bar { background: transparent; border-bottom: none; }
+body.body-doubling .persona-indicator { opacity: 0.55; }
+body.body-doubling .cutoff-banner { background: #232019; border-bottom-color: #3a3325; opacity: 0.85; }
+body.body-doubling .pill { opacity: 0.7; }
+body.body-doubling h1, body.body-doubling h2 { color: #b8af9d; }
+
+/* The toggle itself stays subtle in either state — visible enough to
+   click, never demanding. */
+</style>
+
+<button
+  type="button"
+  class="body-doubling-toggle"
+  id="body-doubling-toggle"
+  title="Toggle quieter UI for when someone is at the table with you"
+>· quiet</button>
+
+<script>
+(function() {
+  var KEY = 'body-doubling';
+  var btn = document.getElementById('body-doubling-toggle');
+  if (!btn) return;
+  function apply(on) {
+    document.body.classList.toggle('body-doubling', on);
+    btn.classList.toggle('on', on);
+    btn.textContent = on ? '· at the table' : '· quiet';
+  }
+  apply(localStorage.getItem(KEY) === '1');
+  btn.addEventListener('click', function() {
+    var next = !document.body.classList.contains('body-doubling');
+    localStorage.setItem(KEY, next ? '1' : '0');
+    apply(next);
+  });
+})();
+</script>
