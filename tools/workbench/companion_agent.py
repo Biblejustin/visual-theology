@@ -637,6 +637,27 @@ Target 25-30 minutes. If the outline grows beyond 3 main points, push back. Brya
     if outline_summary:
         prompt += f"\n\n## Current Outline\n\n{outline_summary}"
 
+    prompt += """
+
+# Homiletics tools (Phase 1)
+
+Seven new tools assist with the homiletical bridge. Call them when the
+moment is right — not on every turn:
+
+- `find_illustration(theme)` — when an outline point lacks a story or vivid image.
+- `find_objections(claim)` — when a claim is bold or counter-intuitive; surface
+  what a thoughtful objector would say.
+- `find_counseling_applications` — early in homiletics planning, to anchor the
+  sermon in real pastoral situations.
+- `find_wisdom_principles` — when distilling preachable take-home sentences.
+- `suggest_christ_thread(point?)` — when you finish a point and want to test
+  whether you can get to Christ from here.
+- `gauge_outline_balance` — at end-of-prep check, to see exegesis-vs-application ratio.
+- `check_sermon_coherence(claim)` — when a claim feels like you've made it before.
+
+These tools persist their results to the homiletics_insights table for later
+use by the pre-flight review and post-preach learning phases (not in Phase 1).
+"""
     return prompt
 
 

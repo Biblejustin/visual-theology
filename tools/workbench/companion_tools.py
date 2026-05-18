@@ -444,6 +444,119 @@ TOOL_DEFINITIONS = [
             "required": ["query"]
         }
     },
+    {
+        "name": "find_illustration",
+        "description": (
+            "Find sermon illustrations for a theme. Searches the library for "
+            "monographs and biographies, then ranks candidates by narrative "
+            "concreteness using Opus. Returns 1-3 insights each with a snippet, "
+            "source resource, and one-line rationale. Use when an outline point "
+            "lacks a story or vivid image."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "theme": {"type": "string", "description": "Theme or topic to illustrate."},
+                "count": {"type": "integer", "description": "How many illustrations to return (1-5). Default 3."},
+            },
+            "required": ["theme"],
+        },
+    },
+    {
+        "name": "find_objections",
+        "description": (
+            "Find likely objections to a claim the sermon is making. Combines a "
+            "library search with an Opus pass over four categories: theological, "
+            "pastoral, cultural, honest_doubt. Returns insights each with the "
+            "objection in the objector's voice and a one-line rebuttal pointer."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "claim": {"type": "string", "description": "The sermon claim under examination."},
+                "count": {"type": "integer", "description": "Number of objections (1-6). Default 3."},
+            },
+            "required": ["claim"],
+        },
+    },
+    {
+        "name": "find_counseling_applications",
+        "description": (
+            "Map the session's passage to common pastoral-counseling situations "
+            "(guilt, anxiety, marriage_conflict, etc.). Each insight names the "
+            "situation, gives a one-paragraph application, and tags a tier "
+            "(preventative / remedial / diagnostic). Uses the session's passage; "
+            "no extra input required."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "description": "Number of applications (1-5). Default 3."},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "find_wisdom_principles",
+        "description": (
+            "Distill 2-3 transferable wisdom principles from the session's passage. "
+            "Each principle is a single proverbial sentence with rationale, "
+            "topical tags, and 1-3 cross-references. Use when the outline needs "
+            "preachable take-home sentences."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "description": "Number of principles (1-5). Default 3."},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "suggest_christ_thread",
+        "description": (
+            "Propose 1-3 Christ-thread angles for the session's passage from a "
+            "Reformed homiletical perspective. Each angle is tagged by category "
+            "(typology / promise_fulfillment / contrast / redemptive_historical / "
+            "direct_reference) with supporting refs. Optionally focus on a specific "
+            "point already in the outline."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "point": {"type": "string", "description": "Optional outline point to focus the Christ-thread."},
+                "count": {"type": "integer", "description": "Number of angles (1-5). Default 3."},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "gauge_outline_balance",
+        "description": (
+            "Tag every node in the session's outline by homiletical type "
+            "(exegetical_claim / application / illustration / christ_thread / etc.) "
+            "and return the exegesis-vs-rest ratio plus flags for sections that "
+            "are nearly pure exegesis or nearly pure application. Tag results are "
+            "cached on outline_nodes; subsequent calls only re-tag changed nodes."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "check_sermon_coherence",
+        "description": (
+            "Find prior sermon outlines that made a similar claim to this one. "
+            "Uses local embedding similarity. Useful for catching repetition "
+            "('you preached this same Christ-thread 3 weeks ago') or unintentional "
+            "drift from prior positions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "claim": {"type": "string", "description": "The claim or proposition to check against prior sermons."},
+            },
+            "required": ["claim"],
+        },
+    },
 ]
 
 
@@ -483,6 +596,20 @@ def execute_tool(tool_name, tool_input, session_context):
             return _search_library(tool_input, session_context)
         elif tool_name == "suggest_search_terms":
             return _suggest_search_terms(tool_input, session_context)
+        elif tool_name == "find_illustration":
+            return _find_illustration(tool_input, session_context)
+        elif tool_name == "find_objections":
+            return _find_objections(tool_input, session_context)
+        elif tool_name == "find_counseling_applications":
+            return _find_counseling_applications(tool_input, session_context)
+        elif tool_name == "find_wisdom_principles":
+            return _find_wisdom_principles(tool_input, session_context)
+        elif tool_name == "suggest_christ_thread":
+            return _suggest_christ_thread(tool_input, session_context)
+        elif tool_name == "gauge_outline_balance":
+            return _gauge_outline_balance(tool_input, session_context)
+        elif tool_name == "check_sermon_coherence":
+            return _check_sermon_coherence(tool_input, session_context)
         # ── Coaching Bridge Tools ──────────────────────────────────────
         elif tool_name == "get_active_commitment":
             from coaching_bridge import load_active_commitment
@@ -1003,3 +1130,125 @@ def _get_passage_context(tool_input, session_context):
                 results[ct] = []
 
     return {"reference": tool_input["reference"], "context": results}
+
+
+# ── Homiletics Engine tools ──────────────────────────────────────────────────
+
+
+def _ctx_passage(ctx):
+    return {
+        'book': ctx.get('book'),
+        'chapter': ctx.get('chapter'),
+        'verse_start': ctx.get('verse_start'),
+        'verse_end': ctx.get('verse_end'),
+        'passage_ref': ctx.get('passage_ref'),
+    }
+
+
+def _serialize_insights(insights):
+    return [
+        {
+            'kind': i.kind,
+            'title': i.title,
+            'body': i.body,
+            'citations': list(i.citations),
+            'confidence': i.confidence,
+            'metadata': dict(i.metadata),
+        }
+        for i in insights
+    ]
+
+
+def _find_illustration(tool_input, ctx):
+    theme = (tool_input.get('theme') or '').strip()
+    if not theme:
+        return {'error': 'theme is required'}
+    count = max(1, min(int(tool_input.get('count', 3)), 5))
+    try:
+        from homiletics_engine import IllustrationFinder
+        insights = IllustrationFinder().run(
+            ctx['db'], session_id=ctx['session_id'],
+            theme=theme, passage=_ctx_passage(ctx), count=count,
+        )
+        return {'insights': _serialize_insights(insights)}
+    except Exception as e:
+        return {'error': f'illustration_failed: {type(e).__name__}: {e}'}
+
+
+def _find_objections(tool_input, ctx):
+    claim = (tool_input.get('claim') or '').strip()
+    if not claim:
+        return {'error': 'claim is required'}
+    count = max(1, min(int(tool_input.get('count', 3)), 6))
+    try:
+        from homiletics_engine import ObjectionFinder
+        insights = ObjectionFinder().run(
+            ctx['db'], session_id=ctx['session_id'],
+            claim=claim, count=count, passage=_ctx_passage(ctx),
+        )
+        return {'insights': _serialize_insights(insights)}
+    except Exception as e:
+        return {'error': f'objection_failed: {type(e).__name__}: {e}'}
+
+
+def _find_counseling_applications(tool_input, ctx):
+    count = max(1, min(int(tool_input.get('count', 3)), 5))
+    try:
+        from homiletics_engine import CounselingApplications
+        insights = CounselingApplications().run(
+            ctx['db'], session_id=ctx['session_id'],
+            passage=_ctx_passage(ctx), count=count,
+        )
+        return {'insights': _serialize_insights(insights)}
+    except Exception as e:
+        return {'error': f'counseling_failed: {type(e).__name__}: {e}'}
+
+
+def _find_wisdom_principles(tool_input, ctx):
+    count = max(1, min(int(tool_input.get('count', 3)), 5))
+    try:
+        from homiletics_engine import WisdomPrinciples
+        insights = WisdomPrinciples().run(
+            ctx['db'], session_id=ctx['session_id'],
+            passage=_ctx_passage(ctx), count=count,
+        )
+        return {'insights': _serialize_insights(insights)}
+    except Exception as e:
+        return {'error': f'wisdom_failed: {type(e).__name__}: {e}'}
+
+
+def _suggest_christ_thread(tool_input, ctx):
+    point = tool_input.get('point')
+    count = max(1, min(int(tool_input.get('count', 3)), 5))
+    try:
+        from homiletics_engine import ChristThreadProposer
+        insights = ChristThreadProposer().run(
+            ctx['db'], session_id=ctx['session_id'],
+            passage=_ctx_passage(ctx), point=point, count=count,
+        )
+        return {'insights': _serialize_insights(insights)}
+    except Exception as e:
+        return {'error': f'christ_thread_failed: {type(e).__name__}: {e}'}
+
+
+def _gauge_outline_balance(tool_input, ctx):
+    try:
+        from homiletics_engine import BalanceGauger
+        insights = BalanceGauger().run(ctx['db'], session_id=ctx['session_id'])
+        return {'insights': _serialize_insights(insights)}
+    except Exception as e:
+        return {'error': f'balance_failed: {type(e).__name__}: {e}'}
+
+
+def _check_sermon_coherence(tool_input, ctx):
+    claim = (tool_input.get('claim') or '').strip()
+    if not claim:
+        return {'error': 'claim is required'}
+    try:
+        from homiletics_engine import CoherenceChecker
+        insights = CoherenceChecker().run(
+            ctx['db'], session_id=ctx['session_id'], claim=claim,
+        )
+        return {'insights': _serialize_insights(insights)}
+    except Exception as e:
+        return {'error': f'coherence_failed: {type(e).__name__}: {e}'}
