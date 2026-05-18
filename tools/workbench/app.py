@@ -1350,9 +1350,12 @@ def study_session_view(session_id):
         annotations = companion_db.get_card_annotations(session_id, phase) if phase == "study_bibles" else []
         notepad = companion_db.get_card_notepad(session_id, phase) if phase == "study_bibles" else ""
         from phase_cluster_router import persona_for_phase as _persona_for_phase
+        from time_coach import assess_session as _tc_assess, week_context as _tc_week
         return render_template("study_session.html",
                                session=session, mode="card",
                                persona=_persona_for_phase(phase),
+                               time_coach=_tc_assess(companion_db, study_analytics, session_id),
+                               time_coach_week=_tc_week(companion_db, study_analytics),
                                card=card_def, phase_index=phase_index,
                                total_phases=len(CARD_PHASES),
                                resource_text=resource_text,
@@ -1372,11 +1375,14 @@ def study_session_view(session_id):
         # Conversation mode (phase 6+)
         messages = companion_db.get_messages(session_id, limit=200)
         from phase_cluster_router import persona_for_phase as _persona_for_phase
+        from time_coach import assess_session as _tc_assess, week_context as _tc_week
         committed_decisions = session_decisions.list_decisions(session_id) if session_decisions else []
         open_decision_keys_list = session_decisions.open_decision_keys(session_id) if session_decisions else []
         return render_template("study_session.html",
                                session=session, mode="conversation",
                                persona=_persona_for_phase(phase),
+                               time_coach=_tc_assess(companion_db, study_analytics, session_id),
+                               time_coach_week=_tc_week(companion_db, study_analytics),
                                card=None, phase_index=5,
                                total_phases=len(CARD_PHASES),
                                resource_text=None,

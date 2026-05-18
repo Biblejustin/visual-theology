@@ -1,0 +1,54 @@
+{% if time_coach %}
+<style>
+.time-coach-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 14px;
+  background: #1a1814;
+  border-bottom: 1px solid #2d2a26;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-size: 12px;
+  color: #b8af9d;
+}
+.tc-day { color: #c9b88a; font-weight: 500; }
+.tc-divider { color: #3a3325; }
+.tc-phase {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.tc-phase .tc-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #88b878;
+}
+.tc-phase.warn .tc-dot { background: #ebd078; }
+.tc-phase.over .tc-dot { background: #d04848; }
+.tc-phase.over { color: #ebc9c9; }
+.tc-next {
+  flex: 1; text-align: right; color: #c9b88a; font-style: italic;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+body.body-doubling .time-coach-strip { opacity: 0.55; }
+</style>
+<div class="time-coach-strip" role="status">
+  <span class="tc-day">{{ time_coach_week.day_name }}</span>
+  <span class="tc-divider">·</span>
+  <span>{{ time_coach_week.sessions_this_week }} session{{ '' if time_coach_week.sessions_this_week == 1 else 's' }} this week</span>
+  <span class="tc-divider">·</span>
+  <span class="tc-phase {{ time_coach.budget_state if time_coach.budget_state != 'ok' else '' }}">
+    <span class="tc-dot"></span>
+    <span>{{ time_coach.current_phase }}</span>
+    {% if time_coach.phase_budget_sec %}
+    <span>
+      {{ (time_coach.time_in_phase_sec / 60)|int }}m
+      / {{ (time_coach.phase_budget_sec / 60)|int }}m budget
+    </span>
+    {% else %}
+    <span>{{ (time_coach.time_in_phase_sec / 60)|int }}m in phase</span>
+    {% endif %}
+  </span>
+  {% if time_coach.next_action %}
+  <span class="tc-next">{{ time_coach.next_action }}</span>
+  {% endif %}
+</div>
+{% endif %}
