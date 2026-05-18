@@ -40,14 +40,20 @@ class CannedEmbeddingsClient:
         return [self._vector(t) for t in texts]
 
     def _vector(self, text: str) -> list:
-        # Stretch SHA-256 into `dimension` float32s, then unit-normalize.
+        # Stretch SHA-256 into `dimension` floats in [-1, 1), then unit-normalize.
+        # We map bytes via int → float division (not float32 reinterpretation)
+        # to avoid the NaN/Inf bit patterns that float32 unpack would produce
+        # for ~1-in-N hash byte sequences.
         h = hashlib.sha256(text.encode("utf-8")).digest()
-        # Repeat the hash until we have enough bytes
         needed = self._dim * 4
         buf = b""
         while len(buf) < needed:
             buf += hashlib.sha256(buf + h).digest()
-        raw = list(struct.unpack(f"{self._dim}f", buf[:needed]))
+        raw = []
+        for i in range(self._dim):
+            # Interpret 4 bytes as a signed int32, scale to [-1, 1).
+            u = int.from_bytes(buf[i * 4:i * 4 + 4], 'little', signed=True)
+            raw.append(u / 2147483648.0)  # 2^31
         # Normalize to unit length
         norm = math.sqrt(sum(x * x for x in raw)) or 1.0
         return [x / norm for x in raw]

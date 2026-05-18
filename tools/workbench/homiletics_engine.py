@@ -767,7 +767,9 @@ class CoherenceChecker:
         dot = sum(x * y for x, y in zip(a, b))
         na = math.sqrt(sum(x * x for x in a)) or 1.0
         nb = math.sqrt(sum(x * x for x in b)) or 1.0
-        return dot / (na * nb)
+        # Clamp to [0, 1] — float precision can push identical unit vectors
+        # to 1.0000000002, which the Insight.confidence CHECK would reject.
+        return max(0.0, min(1.0, dot / (na * nb)))
 
     def _default_embeddings(self):
         from embeddings_client import LocalEmbeddingsClient
