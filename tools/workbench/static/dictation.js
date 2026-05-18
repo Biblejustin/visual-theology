@@ -1,15 +1,22 @@
 /**
- * dictation.js — Hybrid voice-to-text for /study.
+ * dictation.js — Hybrid voice-to-text for /study with prominent recording UX.
  *
- * Live phase: Web Speech API streams interim text into the textarea as you
- * speak (free, low-latency, quality mediocre on theological vocabulary).
- * Final phase: MediaRecorder audio is POSTed to /study/session/<id>/transcribe
- * where local Whisper produces an accurate transcript, which replaces the
- * live-preview text in the textarea.
+ * Layers:
+ *   1. Live phase: Web Speech API streams interim text into the target textarea
+ *      AND into the visible "recording stage" overlay so Bryan can see it land.
+ *   2. Audio phase: MediaRecorder captures full audio; AnalyserNode drives a
+ *      live waveform on the stage canvas so the UI proves the mic is hearing.
+ *   3. Final phase: audio is POSTed to /study/session/<id>/transcribe; Whisper
+ *      returns text + segment-level quality metadata (quality bucket, no_speech
+ *      probability, language). The stage flips to a "review" view: duration,
+ *      word count, language, quality badge, full transcript.
+ *   4. Review buttons:
+ *        - Keep         → writes the transcript to the target and closes stage
+ *        - Discard      → restores the target's pre-recording value and closes
+ *        - Re-record    → restores pre-recording value AND starts a new recording
  *
- * Every Dictation instance tracks a [previewStart, previewStart + previewLen)
- * range in its target element. Interim Web Speech results rewrite that range;
- * Whisper's final text rewrites it one last time when recording stops.
+ * The stage is shared across all dictation instances on the page (singleton
+ * DOM). Only one recording can be active at a time.
  */
 
 'use strict';
@@ -68,9 +75,7 @@
     function setLevel(wrap, ratio) {
         var pct = Math.max(2, Math.min(100, Math.round((ratio || 0) * 100)));
         var bars = wrap.querySelectorAll('.mic-level span, .mic-readout-meter span');
-        bars.forEach(function (bar) {
-            bar.style.width = pct + '%';
-        });
+        bars.forEach(function (bar) { bar.style.width = pct + '%'; });
     }
 
     function clearChildren(node) {
@@ -110,7 +115,6 @@
         var picker = wrap.querySelector('.mic-picker');
         var select = wrap.querySelector('.mic-picker-select');
         if (!toggle || !picker || !select) return;
-
         function openPicker() {
             populatePicker(wrap);
             picker.hidden = false;
@@ -122,24 +126,15 @@
             toggle.setAttribute('aria-expanded', 'false');
             wrap.classList.remove('picker-open');
         }
-
         toggle.addEventListener('click', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (picker.hidden) openPicker();
-            else closePicker();
+            e.preventDefault(); e.stopPropagation();
+            if (picker.hidden) openPicker(); else closePicker();
         });
-
-        // Selecting a mic commits the choice and dismisses the dropdown.
         select.addEventListener('change', function () {
             localStorage.setItem(STORAGE_KEY, select.value);
             closePicker();
         });
-
-        // Clicks inside the picker (select, label) must not bubble to the
-        // document-level close handler registered below.
         picker.addEventListener('click', function (e) { e.stopPropagation(); });
-
         document.addEventListener('click', function (e) {
             if (!wrap.contains(e.target)) closePicker();
         });
@@ -147,6 +142,327 @@
             if (e.key === 'Escape' && !picker.hidden) closePicker();
         });
     }
+
+    // ── Recording stage (singleton overlay) ──────────────────────────────
+
+    var Stage = {
+        el: null, canvas: null, ctx: null,
+        statusEl: null, timeEl: null, levelEl: null, transcriptEl: null,
+        stopBtn: null, reviewEl: null,
+        owner: null,                  // current Dictation instance using the stage
+        waveformBuf: null,            // ring buffer of recent level samples (0..1)
+        startedAt: 0,                 // ms timestamp when recording started
+        tickHandle: null,
+    };
+
+    function ensureStage() {
+        if (Stage.el) return Stage.el;
+
+        var el = document.createElement('div');
+        el.id = 'dictation-stage';
+        el.setAttribute('aria-live', 'polite');
+        el.hidden = true;
+        el.innerHTML = ''
+          + '<div class="ds-card">'
+          +   '<div class="ds-header">'
+          +     '<span class="ds-dot"></span>'
+          +     '<span class="ds-status">Recording</span>'
+          +     '<span class="ds-time" aria-label="Elapsed">0:00</span>'
+          +     '<button type="button" class="ds-stop" aria-label="Stop recording">Stop</button>'
+          +   '</div>'
+          +   '<canvas class="ds-canvas" width="800" height="60" aria-hidden="true"></canvas>'
+          +   '<div class="ds-meter" aria-hidden="true"><span></span></div>'
+          +   '<div class="ds-transcript-label">Live transcript</div>'
+          +   '<div class="ds-transcript" aria-live="polite">Listening…</div>'
+          +   '<div class="ds-review" hidden></div>'
+          + '</div>';
+
+        var style = document.createElement('style');
+        style.textContent = ''
+          + '#dictation-stage {'
+          + '  position: fixed; top: 0; left: 0; right: 0; z-index: 5000;'
+          + '  background: rgba(20, 18, 14, 0.92); backdrop-filter: blur(8px);'
+          + '  border-bottom: 2px solid #c9b88a; box-shadow: 0 4px 20px rgba(0,0,0,0.5);'
+          + '  font-family: -apple-system, system-ui, sans-serif; color: #e8e1d0;'
+          + '  padding: 14px 24px; transition: opacity 0.15s ease;'
+          + '}'
+          + '#dictation-stage .ds-card { max-width: 920px; margin: 0 auto; }'
+          + '#dictation-stage .ds-header {'
+          + '  display: flex; align-items: center; gap: 12px; margin-bottom: 8px;'
+          + '  font-size: 14px;'
+          + '}'
+          + '#dictation-stage .ds-dot {'
+          + '  width: 11px; height: 11px; border-radius: 50%;'
+          + '  background: #d04848; box-shadow: 0 0 6px #d04848;'
+          + '  animation: ds-pulse 1.1s infinite;'
+          + '}'
+          + '@keyframes ds-pulse {'
+          + '  0%, 100% { opacity: 1; transform: scale(1); }'
+          + '  50%      { opacity: 0.45; transform: scale(0.82); }'
+          + '}'
+          + '#dictation-stage .ds-status { font-weight: 600; letter-spacing: 0.02em; }'
+          + '#dictation-stage .ds-time {'
+          + '  font-variant-numeric: tabular-nums; color: #c9b88a;'
+          + '  margin-left: auto; margin-right: 12px; font-size: 13px;'
+          + '}'
+          + '#dictation-stage .ds-stop {'
+          + '  background: #c9b88a; color: #1a1814; border: none;'
+          + '  padding: 7px 18px; border-radius: 4px; font-size: 13px;'
+          + '  font-weight: 600; cursor: pointer;'
+          + '}'
+          + '#dictation-stage .ds-stop:hover { background: #ebd9a7; }'
+          + '#dictation-stage .ds-canvas {'
+          + '  display: block; width: 100%; height: 60px; background: #15130f;'
+          + '  border: 1px solid #2d2a26; border-radius: 4px;'
+          + '}'
+          + '#dictation-stage .ds-meter {'
+          + '  margin-top: 6px; height: 4px; background: #2d2a26; border-radius: 2px;'
+          + '  overflow: hidden;'
+          + '}'
+          + '#dictation-stage .ds-meter span {'
+          + '  display: block; height: 100%; width: 2%; background: #88b878;'
+          + '  transition: width 0.06s linear, background 0.2s linear;'
+          + '}'
+          + '#dictation-stage .ds-transcript-label {'
+          + '  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;'
+          + '  color: #8a8275; margin: 10px 0 4px;'
+          + '}'
+          + '#dictation-stage .ds-transcript {'
+          + '  min-height: 38px; max-height: 120px; overflow-y: auto;'
+          + '  font-size: 15px; line-height: 1.45; color: #e8e1d0;'
+          + '  background: #1a1814; border: 1px solid #2d2a26;'
+          + '  border-radius: 4px; padding: 8px 12px;'
+          + '}'
+          + '#dictation-stage .ds-transcript.empty { color: #5a5447; font-style: italic; }'
+          + '#dictation-stage .ds-review {'
+          + '  margin-top: 10px; padding-top: 10px; border-top: 1px solid #2d2a26;'
+          + '}'
+          + '#dictation-stage .ds-summary {'
+          + '  display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline;'
+          + '  font-size: 13px; color: #b8af9d; margin-bottom: 8px;'
+          + '}'
+          + '#dictation-stage .ds-summary .badge {'
+          + '  padding: 2px 10px; border-radius: 999px; font-size: 11px;'
+          + '  font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;'
+          + '}'
+          + '#dictation-stage .ds-summary .badge.good     { background: #1f3a2d; color: #88e878; }'
+          + '#dictation-stage .ds-summary .badge.degraded { background: #3d3a1f; color: #ebd078; }'
+          + '#dictation-stage .ds-summary .badge.silent   { background: #4d2a2a; color: #ebc9c9; }'
+          + '#dictation-stage .ds-summary .stat { font-variant-numeric: tabular-nums; }'
+          + '#dictation-stage .ds-actions {'
+          + '  display: flex; gap: 10px; margin-top: 6px;'
+          + '}'
+          + '#dictation-stage .ds-actions button {'
+          + '  background: transparent; color: #c9b88a; border: 1px solid #6a5a3a;'
+          + '  padding: 6px 14px; border-radius: 4px; font-size: 13px;'
+          + '  font-weight: 500; cursor: pointer;'
+          + '}'
+          + '#dictation-stage .ds-actions button.primary {'
+          + '  background: #c9b88a; color: #1a1814; border-color: #c9b88a;'
+          + '}'
+          + '#dictation-stage .ds-actions button:hover { background: #6a5a3a; color: #e8e1d0; }'
+          + '#dictation-stage .ds-actions button.primary:hover { background: #ebd9a7; color: #1a1814; }'
+          + '#dictation-stage.body-doubling, body.body-doubling #dictation-stage { opacity: 0.85; }';
+        document.head.appendChild(style);
+        document.body.appendChild(el);
+
+        Stage.el = el;
+        Stage.canvas = el.querySelector('.ds-canvas');
+        Stage.ctx = Stage.canvas.getContext('2d');
+        Stage.statusEl = el.querySelector('.ds-status');
+        Stage.timeEl = el.querySelector('.ds-time');
+        Stage.levelEl = el.querySelector('.ds-meter span');
+        Stage.transcriptEl = el.querySelector('.ds-transcript');
+        Stage.stopBtn = el.querySelector('.ds-stop');
+        Stage.reviewEl = el.querySelector('.ds-review');
+        Stage.waveformBuf = new Float32Array(160);
+
+        Stage.stopBtn.addEventListener('click', function () {
+            if (Stage.owner) Stage.owner.stop();
+        });
+        return el;
+    }
+
+    function showStage(owner) {
+        ensureStage();
+        Stage.owner = owner;
+        Stage.el.hidden = false;
+        Stage.startedAt = Date.now();
+        Stage.statusEl.textContent = 'Recording';
+        Stage.timeEl.textContent = '0:00';
+        Stage.transcriptEl.textContent = 'Listening…';
+        Stage.transcriptEl.classList.add('empty');
+        Stage.reviewEl.hidden = true;
+        Stage.reviewEl.innerHTML = '';
+        Stage.stopBtn.hidden = false;
+        Stage.stopBtn.disabled = false;
+        Stage.stopBtn.textContent = 'Stop';
+        for (var i = 0; i < Stage.waveformBuf.length; i++) Stage.waveformBuf[i] = 0;
+        drawWaveform(0);
+        startStageTicker();
+    }
+
+    function hideStage() {
+        if (!Stage.el) return;
+        Stage.el.hidden = true;
+        Stage.owner = null;
+        stopStageTicker();
+    }
+
+    function startStageTicker() {
+        stopStageTicker();
+        Stage.tickHandle = window.setInterval(function () {
+            var elapsedMs = Date.now() - Stage.startedAt;
+            var sec = Math.floor(elapsedMs / 1000);
+            var mm = Math.floor(sec / 60);
+            var ss = sec % 60;
+            Stage.timeEl.textContent = mm + ':' + (ss < 10 ? '0' : '') + ss;
+        }, 250);
+    }
+
+    function stopStageTicker() {
+        if (Stage.tickHandle) {
+            window.clearInterval(Stage.tickHandle);
+            Stage.tickHandle = null;
+        }
+    }
+
+    function pushLevelToStage(ratio) {
+        if (!Stage.el || Stage.el.hidden) return;
+        var clamped = Math.max(0, Math.min(1, ratio));
+        // Rolling buffer
+        var buf = Stage.waveformBuf;
+        for (var i = 0; i < buf.length - 1; i++) buf[i] = buf[i + 1];
+        buf[buf.length - 1] = clamped;
+        drawWaveform(clamped);
+        if (Stage.levelEl) {
+            var pct = Math.max(2, Math.min(100, Math.round(clamped * 100)));
+            Stage.levelEl.style.width = pct + '%';
+            // Tint the bar by level so the green→yellow→red mapping is obvious.
+            var color = clamped > 0.85 ? '#d04848' : (clamped > 0.5 ? '#ebd078' : '#88b878');
+            Stage.levelEl.style.background = color;
+        }
+    }
+
+    function drawWaveform(latestRatio) {
+        if (!Stage.canvas) return;
+        var canvas = Stage.canvas;
+        // Match display size (devicePixelRatio support deferred — visual is fine).
+        var w = canvas.clientWidth || canvas.width;
+        var h = canvas.height;
+        if (canvas.width !== w) canvas.width = w;
+        var ctx = Stage.ctx;
+        ctx.clearRect(0, 0, w, h);
+
+        var buf = Stage.waveformBuf;
+        var n = buf.length;
+        var barW = Math.max(2, Math.floor(w / n) - 1);
+        var gap = 1;
+        var totalBarPlusGap = barW + gap;
+        var startX = w - n * totalBarPlusGap;
+        if (startX < 0) startX = 0;
+
+        for (var i = 0; i < n; i++) {
+            var v = buf[i];
+            var amp = Math.max(2, v * h);
+            var x = startX + i * totalBarPlusGap;
+            var y = (h - amp) / 2;
+            var alpha = 0.35 + 0.65 * (i / n);
+            var fg = v > 0.85 ? [208, 72, 72] : v > 0.5 ? [235, 208, 120] : [136, 184, 120];
+            ctx.fillStyle = 'rgba(' + fg.join(',') + ',' + alpha.toFixed(2) + ')';
+            ctx.fillRect(x, y, barW, amp);
+        }
+    }
+
+    function setStageTranscript(text) {
+        if (!Stage.transcriptEl) return;
+        var trimmed = (text || '').trim();
+        if (!trimmed) {
+            Stage.transcriptEl.textContent = 'Listening…';
+            Stage.transcriptEl.classList.add('empty');
+            return;
+        }
+        Stage.transcriptEl.textContent = trimmed;
+        Stage.transcriptEl.classList.remove('empty');
+        // Auto-scroll to bottom so the latest words are visible.
+        Stage.transcriptEl.scrollTop = Stage.transcriptEl.scrollHeight;
+    }
+
+    function setStageProcessing() {
+        if (!Stage.el) return;
+        Stage.statusEl.textContent = 'Transcribing…';
+        Stage.stopBtn.disabled = true;
+        Stage.stopBtn.textContent = 'Processing';
+    }
+
+    function setStageReview(data, owner) {
+        if (!Stage.el) return;
+        stopStageTicker();
+        Stage.statusEl.textContent = 'Review';
+        Stage.stopBtn.hidden = true;
+        var text = (data.text || '').trim();
+        var quality = data.quality || (text ? 'degraded' : 'silent');
+        var dur = Number(data.duration_sec || 0);
+        var words = Number(data.word_count || (text ? text.split(/\s+/).length : 0));
+        var lang = data.language || '?';
+
+        if (text) {
+            Stage.transcriptEl.textContent = text;
+            Stage.transcriptEl.classList.remove('empty');
+        } else {
+            Stage.transcriptEl.textContent = 'No words recognized.';
+            Stage.transcriptEl.classList.add('empty');
+        }
+
+        var review = Stage.reviewEl;
+        review.innerHTML = '';
+        var summary = document.createElement('div');
+        summary.className = 'ds-summary';
+        summary.innerHTML = ''
+          + '<span class="badge ' + quality + '">' + quality + '</span>'
+          + '<span class="stat">' + dur.toFixed(1) + 's recorded</span>'
+          + '<span class="stat">' + words + ' words</span>'
+          + '<span class="stat">lang ' + lang + '</span>'
+          + '<span class="stat">' + (data.segment_count || 0) + ' segments</span>';
+        review.appendChild(summary);
+
+        var actions = document.createElement('div');
+        actions.className = 'ds-actions';
+
+        if (text) {
+            var keepBtn = document.createElement('button');
+            keepBtn.type = 'button';
+            keepBtn.className = 'primary';
+            keepBtn.textContent = 'Keep transcript';
+            keepBtn.addEventListener('click', function () { owner.acceptTranscript(text); });
+            actions.appendChild(keepBtn);
+        }
+
+        var retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.textContent = text ? 'Discard & re-record' : 'Re-record';
+        retryBtn.addEventListener('click', function () { owner.discardAndRetry(); });
+        actions.appendChild(retryBtn);
+
+        if (text) {
+            var discardBtn = document.createElement('button');
+            discardBtn.type = 'button';
+            discardBtn.textContent = 'Discard';
+            discardBtn.addEventListener('click', function () { owner.discardAndClose(); });
+            actions.appendChild(discardBtn);
+        } else {
+            var closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
+            closeBtn.textContent = 'Close';
+            closeBtn.addEventListener('click', function () { owner.discardAndClose(); });
+            actions.appendChild(closeBtn);
+        }
+
+        review.appendChild(actions);
+        review.hidden = false;
+    }
+
+    // ── Dictation instance ───────────────────────────────────────────────
 
     function Dictation(wrap) {
         this.wrap = wrap;
@@ -165,6 +481,8 @@
         this.analyser = null;
         this.levelData = null;
         this.levelRaf = null;
+        this.preDictationValue = '';   // target's value before this session
+        this.preDictationStart = 0;    // cursor position before this session
 
         var self = this;
         this.btn.addEventListener('click', function () { self.toggle(); });
@@ -187,12 +505,6 @@
         else this.start();
     };
 
-    /**
-     * Replace the tracked preview range [previewStart, previewStart + previewLen)
-     * with `text`. Inserts a single leading space when joining to adjacent words
-     * so dictation doesn't produce "helloworld". Dispatches an `input` event so
-     * existing auto-save listeners fire.
-     */
     Dictation.prototype.writePreview = function (text) {
         var target = this.getTarget();
         if (!target || this.previewStart == null) return;
@@ -213,6 +525,7 @@
         var SR = getSpeechRecognitionCtor();
         if (!SR) {
             setState(this.wrap, 'recording', 'Recording - stop for transcript');
+            setStageTranscript('Listening… (live preview unavailable in this browser; full transcript on stop)');
             return false;
         }
         var target = this.getTarget();
@@ -235,16 +548,15 @@
             }
             setState(self.wrap, 'recording', 'Live text ready');
             self.writePreview(text);
+            setStageTranscript(text);
         };
 
         rec.onerror = function (e) {
-            // Don't alert — live preview is best-effort. Whisper still runs on the audio.
             console.warn('dictation: SpeechRecognition error', e.error);
             if (self.recording) setState(self.wrap, 'recording', 'Recording - stop for transcript');
         };
 
         rec.onend = function () {
-            // Safari tends to cut off on pauses; reopen if we're still recording.
             if (self.recording && self.recognition === rec) {
                 try { rec.start(); } catch (err) { /* already started / stopped */ }
             }
@@ -275,11 +587,7 @@
     Dictation.prototype.startLevelMeter = function (stream) {
         this.stopLevelMeter();
         var AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) {
-            setLevel(this.wrap, 0);
-            return;
-        }
-
+        if (!AC) { setLevel(this.wrap, 0); return; }
         try {
             var ctx = new AC();
             var analyser = ctx.createAnalyser();
@@ -305,12 +613,11 @@
             sum += centered * centered;
         }
         var rms = Math.sqrt(sum / this.levelData.length) / 128;
-        setLevel(this.wrap, Math.min(1, rms * 8));
-
+        var amplified = Math.min(1, rms * 8);
+        setLevel(this.wrap, amplified);
+        pushLevelToStage(amplified);
         var self = this;
-        this.levelRaf = window.requestAnimationFrame(function () {
-            self.tickLevelMeter();
-        });
+        this.levelRaf = window.requestAnimationFrame(function () { self.tickLevelMeter(); });
     };
 
     Dictation.prototype.stopLevelMeter = function () {
@@ -333,11 +640,14 @@
         setState(this.wrap, 'starting', 'Starting...');
         setLevel(this.wrap, 0);
 
-        // Seed the preview range from the current cursor position even if Web
-        // Speech is unavailable — Whisper's writePreview() call still needs it.
+        // Snapshot the target so Discard / Re-record can roll back to it.
         var tgt = this.getTarget();
-        this.previewStart = tgt ? ((typeof tgt.selectionStart === 'number') ? tgt.selectionStart : tgt.value.length) : 0;
+        this.preDictationValue = tgt ? tgt.value : '';
+        this.preDictationStart = tgt ? ((typeof tgt.selectionStart === 'number') ? tgt.selectionStart : tgt.value.length) : 0;
+        this.previewStart = this.preDictationStart;
         this.previewLen = 0;
+
+        showStage(this);
 
         function openMic(constraints) {
             return navigator.mediaDevices.getUserMedia(constraints);
@@ -367,11 +677,11 @@
             self.processing = false;
             setState(self.wrap, 'recording', 'Recording - click mic to stop');
             self.startLevelMeter(stream);
-
             self.startLivePreview();
         }).catch(function (err) {
             console.error('dictation: getUserMedia failed', err);
             setState(self.wrap, 'error');
+            hideStage();
             alert('Microphone access was denied or unavailable: ' + err.message);
         });
     };
@@ -383,6 +693,7 @@
             this.recording = false;
             this.processing = true;
             setState(this.wrap, 'processing', 'Transcribing...');
+            setStageProcessing();
         }
         this.stopLevelMeter();
         if (this.stream) {
@@ -398,6 +709,7 @@
         if (!blob.size) {
             this.processing = false;
             setState(this.wrap, 'error', 'No audio captured');
+            setStageReview({ text: '', duration_sec: 0, quality: 'silent', word_count: 0, segment_count: 0 }, this);
             return;
         }
 
@@ -412,37 +724,62 @@
                 return r.json();
             })
             .then(function (data) {
-                var text = (data.text || '').trim();
-                if (!text) {
-                    var seconds = Number(data.duration_sec || 0);
-                    var detail = seconds ? ('No words recognized (' + seconds.toFixed(1) + 's audio)') : 'No words recognized';
-                    console.warn('dictation: empty transcript', {
-                        blobSize: blob.size,
-                        blobType: blob.type,
-                        durationSec: data.duration_sec,
-                        language: data.language
-                    });
-                    self.previewStart = null;
-                    self.previewLen = 0;
-                    self.processing = false;
-                    setState(self.wrap, 'error', detail);
-                    return;
-                }
-                self.writePreview(text);
-                self.previewStart = null;
-                self.previewLen = 0;
                 self.processing = false;
                 setState(self.wrap, 'idle');
+                setStageReview(data, self);
             })
             .catch(function (err) {
                 console.error('dictation: Whisper transcription failed', err);
-                // Keep whatever live-preview text landed — it's still useful.
-                self.previewStart = null;
-                self.previewLen = 0;
                 self.processing = false;
                 setState(self.wrap, 'error');
-                alert('Whisper cleanup failed (live preview text was kept): ' + err.message);
+                setStageReview({
+                    text: '',
+                    duration_sec: (Date.now() - Stage.startedAt) / 1000,
+                    quality: 'silent',
+                    word_count: 0,
+                    segment_count: 0,
+                    language: '',
+                }, self);
+                alert('Whisper transcription failed: ' + err.message);
             });
+    };
+
+    Dictation.prototype._rollbackTarget = function () {
+        var target = this.getTarget();
+        if (!target) return;
+        target.value = this.preDictationValue;
+        try { target.setSelectionRange(this.preDictationStart, this.preDictationStart); } catch (e) { /* ignore */ }
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+
+    Dictation.prototype.acceptTranscript = function (text) {
+        // Roll back the live-preview / interim text, then insert the final
+        // Whisper transcript at the original cursor position.
+        this._rollbackTarget();
+        this.previewStart = this.preDictationStart;
+        this.previewLen = 0;
+        this.writePreview(text);
+        this.previewStart = null;
+        this.previewLen = 0;
+        hideStage();
+    };
+
+    Dictation.prototype.discardAndClose = function () {
+        this._rollbackTarget();
+        this.previewStart = null;
+        this.previewLen = 0;
+        hideStage();
+    };
+
+    Dictation.prototype.discardAndRetry = function () {
+        this._rollbackTarget();
+        this.previewStart = null;
+        this.previewLen = 0;
+        // Hide first to reset the stage cleanly, then start a fresh recording.
+        hideStage();
+        var self = this;
+        // Defer to next tick so the hide animation / cleanup completes.
+        window.setTimeout(function () { self.start(); }, 50);
     };
 
     function init() {

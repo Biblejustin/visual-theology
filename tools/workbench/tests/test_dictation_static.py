@@ -36,7 +36,7 @@ def test_study_session_uses_current_dictation_asset_version():
     html = _read("templates/study_session.html")
 
     assert "/static/study.css?v=9" in html
-    assert "/static/dictation.js?v=8" in html
+    assert "/static/dictation.js?v=9" in html
 
 
 def test_mic_picker_hidden_state_is_not_overridden_by_flex_display():

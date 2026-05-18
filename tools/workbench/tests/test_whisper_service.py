@@ -20,8 +20,12 @@ def _verify_url():
 
 
 class _FakeSegment:
-    def __init__(self, text):
+    def __init__(self, text, start=0.0, end=0.0, no_speech_prob=0.05, avg_logprob=-0.3):
         self.text = text
+        self.start = start
+        self.end = end
+        self.no_speech_prob = no_speech_prob
+        self.avg_logprob = avg_logprob
 
 
 class _FakeInfo:
@@ -33,8 +37,13 @@ class _FakeInfo:
 class _FakeModel:
     """Stand-in for faster_whisper.WhisperModel."""
 
-    def __init__(self, segments_text=None, duration=1.5, language='en', raise_on_transcribe=None):
-        self.segments_text = segments_text or ['hello world']
+    def __init__(self, segments_text=None, duration=1.5, language='en',
+                 raise_on_transcribe=None, segments=None):
+        # Allow tests to pass either text strings (legacy) or full segment objects.
+        if segments is not None:
+            self._segments = segments
+        else:
+            self._segments = [_FakeSegment(t) for t in (segments_text or ['hello world'])]
         self.duration = duration
         self.language = language
         self.raise_on_transcribe = raise_on_transcribe
@@ -46,8 +55,7 @@ class _FakeModel:
         self.last_kwargs = kwargs
         if self.raise_on_transcribe:
             raise self.raise_on_transcribe
-        segments = (_FakeSegment(t) for t in self.segments_text)
-        return segments, _FakeInfo(self.duration, self.language)
+        return iter(self._segments), _FakeInfo(self.duration, self.language)
 
 
 @pytest.fixture(autouse=True)
@@ -137,3 +145,56 @@ def test_transcribe_strips_leading_trailing_whitespace():
     result = whisper_service.transcribe_audio(b'x', content_type='audio/webm')
 
     assert result['text'] == 'padded'
+
+
+def test_transcribe_returns_segments_with_quality_fields():
+    import whisper_service
+    # Note: real whisper segments embed leading spaces; emulate the same.
+    fake = _FakeModel(segments=[
+        _FakeSegment('Lord open my eyes', start=0.0, end=2.1,
+                     no_speech_prob=0.04, avg_logprob=-0.25),
+        _FakeSegment(' to see your word.', start=2.1, end=3.8,
+                     no_speech_prob=0.08, avg_logprob=-0.32),
+    ])
+    whisper_service.set_model_for_testing(fake)
+
+    result = whisper_service.transcribe_audio(b'x', content_type='audio/webm')
+
+    assert result['segment_count'] == 2
+    assert len(result['segments']) == 2
+    assert result['segments'][0]['text'] == 'Lord open my eyes'
+    assert result['segments'][0]['no_speech_prob'] == pytest.approx(0.04)
+    assert result['segments'][0]['avg_logprob'] == pytest.approx(-0.25)
+    assert result['word_count'] == 8
+    assert result['avg_no_speech'] == pytest.approx(0.06)
+    assert result['quality'] == 'good'
+
+
+def test_transcribe_marks_silent_audio():
+    import whisper_service
+    fake = _FakeModel(segments=[
+        _FakeSegment('', no_speech_prob=0.95),
+    ])
+    whisper_service.set_model_for_testing(fake)
+    result = whisper_service.transcribe_audio(b'x', content_type='audio/webm')
+    assert result['quality'] == 'silent'
+
+
+def test_transcribe_marks_degraded_low_confidence():
+    import whisper_service
+    fake = _FakeModel(segments=[
+        _FakeSegment('mumble', no_speech_prob=0.2, avg_logprob=-1.5),
+    ])
+    whisper_service.set_model_for_testing(fake)
+    result = whisper_service.transcribe_audio(b'x', content_type='audio/webm')
+    assert result['quality'] == 'degraded'
+
+
+def test_transcribe_zero_segments_is_silent():
+    import whisper_service
+    fake = _FakeModel(segments=[])
+    whisper_service.set_model_for_testing(fake)
+    result = whisper_service.transcribe_audio(b'x', content_type='audio/webm')
+    assert result['segment_count'] == 0
+    assert result['quality'] == 'silent'
+    assert result['text'] == ''
