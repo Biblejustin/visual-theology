@@ -76,6 +76,34 @@
         </div>
     </div>
 
+    <h2>Decision velocity (per session)</h2>
+    {% if decision_velocity %}
+    <table>
+        <thead>
+            <tr>
+                <th>Passage</th>
+                <th>Started</th>
+                <th>Phase</th>
+                <th class="num">Committed</th>
+                <th class="num">%</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in decision_velocity %}
+            <tr>
+                <td><a href="/study/session/{{ s.session_id }}" style="color:#c9b88a;text-decoration:none;">{{ s.passage_ref }}</a></td>
+                <td class="excerpt">{{ s.created_at[:10] }}</td>
+                <td class="excerpt">{{ s.current_phase }}</td>
+                <td class="num">{{ s.committed }} / {{ s.total }}</td>
+                <td class="num">{{ s.pct }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No active sessions in the window.</div>
+    {% endif %}
+
     <h2>Cutoff override activity</h2>
     {% if cutoffs %}
     <table>

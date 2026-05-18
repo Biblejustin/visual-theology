@@ -1221,7 +1221,7 @@ def study_patterns():
     from patterns_report import (
         cutoff_summary, cutoff_recent_dismissed_rate,
         accuser_category_summary, accuser_recent_examples,
-        recent_session_activity,
+        recent_session_activity, decision_velocity_by_session,
     )
     days = int(request.args.get('days', 30))
     cutoffs = cutoff_summary(study_analytics, days=days) if study_analytics else []
@@ -1231,6 +1231,7 @@ def study_patterns():
     session_stats = recent_session_activity(companion_db, days=days) if companion_db else {'active_sessions': 0}
     feedback_recent = pastor_feedback.recent_feedback(limit=8) if pastor_feedback else []
     feedback_counts = pastor_feedback.count_by_valence() if pastor_feedback else {}
+    decision_velocity = decision_velocity_by_session(companion_db, session_decisions, days=days) if companion_db else []
     return render_template(
         "study_patterns.html",
         days=days,
@@ -1241,6 +1242,7 @@ def study_patterns():
         session_stats=session_stats,
         feedback_recent=feedback_recent,
         feedback_counts=feedback_counts,
+        decision_velocity=decision_velocity,
     )
 
 

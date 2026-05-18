@@ -102,3 +102,38 @@ def recent_session_activity(companion_db, days=30):
     finally:
         conn.close()
     return {'active_sessions': (row['active'] if row else 0)}
+
+
+def decision_velocity_by_session(companion_db, session_decision_store, days=30):
+    """Per-session commit progress — how many of the 9 decision keys are
+    committed for each recent session. Stalled sessions (low commit counts
+    + old) bubble up visually so Bryan can spot avoidance patterns."""
+    from session_decisions import DECISION_KEYS
+    total = len(DECISION_KEYS)
+    since = _cutoff_iso(days)
+    conn = companion_db._conn()
+    try:
+        rows = conn.execute("""
+            SELECT id, passage_ref, created_at, current_phase
+            FROM sessions
+            WHERE created_at >= ? AND status = 'active'
+            ORDER BY created_at DESC
+        """, (since,)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        if session_decision_store:
+            committed = len(session_decision_store.list_decisions(r['id']))
+        else:
+            committed = 0
+        out.append({
+            'session_id': r['id'],
+            'passage_ref': r['passage_ref'],
+            'current_phase': r['current_phase'],
+            'created_at': r['created_at'],
+            'committed': committed,
+            'total': total,
+            'pct': round(100.0 * committed / total),
+        })
+    return out
