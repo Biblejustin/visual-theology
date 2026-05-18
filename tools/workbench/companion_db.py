@@ -564,6 +564,118 @@ class CompanionDB:
         finally:
             conn.close()
 
+    def save_insight(self, *, session_id, kind, title, body, citations,
+                     confidence, metadata, source_tool):
+        """Insert a homiletics_insights row. Returns the new row id."""
+        import json
+        from datetime import datetime, timezone
+        conn = self._conn()
+        try:
+            cur = conn.execute(
+                "INSERT INTO homiletics_insights "
+                "(session_id, kind, title, body, citations, confidence, metadata, "
+                " created_at, source_tool) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_id, kind, title, body,
+                 json.dumps(citations or []),
+                 float(confidence),
+                 json.dumps(metadata or {}),
+                 datetime.now(timezone.utc).isoformat(),
+                 source_tool),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def get_insights(self, session_id, kind=None):
+        """Return homiletics_insights rows for a session, optionally filtered by kind.
+
+        citations and metadata are returned as raw JSON strings — callers decode.
+        """
+        conn = self._conn()
+        try:
+            if kind:
+                rows = conn.execute(
+                    "SELECT * FROM homiletics_insights "
+                    "WHERE session_id = ? AND kind = ? ORDER BY created_at DESC",
+                    (session_id, kind),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM homiletics_insights "
+                    "WHERE session_id = ? ORDER BY created_at DESC",
+                    (session_id,),
+                ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def save_claim_embedding(self, *, source_kind, source_id, claim_text,
+                              vector, model):
+        """Insert/replace a claim_embeddings row. Vector is packed as float32 bytes."""
+        import struct
+        from datetime import datetime, timezone
+        blob = struct.pack(f'{len(vector)}f', *vector)
+        conn = self._conn()
+        try:
+            cur = conn.execute(
+                "INSERT INTO claim_embeddings "
+                "(source_kind, source_id, claim_text, embedding, embedding_model, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(source_kind, source_id, embedding_model) DO UPDATE SET "
+                "  claim_text = excluded.claim_text, "
+                "  embedding = excluded.embedding, "
+                "  created_at = excluded.created_at",
+                (source_kind, source_id, claim_text, blob, model,
+                 datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def get_claim_embeddings(self, *, source_kind, model, source_ids=None):
+        """Return claim_embeddings rows with the vector unpacked to list[float].
+
+        If source_ids is provided, returns only embeddings for those ids.
+        """
+        import struct
+        conn = self._conn()
+        try:
+            if source_ids is not None:
+                if not source_ids:
+                    return []
+                placeholders = ",".join("?" for _ in source_ids)
+                rows = conn.execute(
+                    f"SELECT * FROM claim_embeddings "
+                    f"WHERE source_kind = ? AND embedding_model = ? "
+                    f"  AND source_id IN ({placeholders})",
+                    [source_kind, model, *source_ids],
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM claim_embeddings "
+                    "WHERE source_kind = ? AND embedding_model = ?",
+                    (source_kind, model),
+                ).fetchall()
+            out = []
+            for r in rows:
+                blob = r['embedding']
+                n = len(blob) // 4   # float32 = 4 bytes
+                vec = list(struct.unpack(f'{n}f', blob))
+                out.append({
+                    'id': r['id'],
+                    'source_kind': r['source_kind'],
+                    'source_id': r['source_id'],
+                    'claim_text': r['claim_text'],
+                    'vector': vec,
+                    'model': r['embedding_model'],
+                })
+            return out
+        finally:
+            conn.close()
+
     def list_sessions(self, status=None):
         conn = self._conn()
         if status:
