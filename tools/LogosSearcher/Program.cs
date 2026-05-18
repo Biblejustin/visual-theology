@@ -97,6 +97,9 @@ public static class Program
                     case "search":
                         HandleSearch(root);
                         break;
+                    case "suggest":
+                        HandleSuggest(root);
+                        break;
                     default:
                         EmitJson(new Dictionary<string, object> { { "ok", false }, { "error", "unknown_op" }, { "message", $"Unknown op: {op}" } });
                         break;
@@ -190,6 +193,73 @@ public static class Program
             { "total_results", totalResults },
             { "total_hits", totalHits },
             { "hits", hits },
+        });
+    }
+
+    static void HandleSuggest(JsonElement root)
+    {
+        // QueryParser.GetCompleterContexts(query, settings) returns a list of
+        // CompleterContext objects representing possible completions at the end
+        // of the query string. We turn each into a flat suggestion record.
+        var q = root.GetProperty("q").GetString() ?? "";
+        if (string.IsNullOrWhiteSpace(q))
+        {
+            EmitJson(new Dictionary<string, object> { { "ok", false }, { "error", "empty_query" } });
+            return;
+        }
+
+        var getCompleter = _queryParserType.GetMethods()
+            .FirstOrDefault(m => m.Name == "GetCompleterContexts" && m.GetParameters().Length == 2);
+        if (getCompleter == null)
+        {
+            EmitJson(new Dictionary<string, object> { { "ok", false }, { "error", "no_completer" } });
+            return;
+        }
+        var settingsType = getCompleter.GetParameters()[1].ParameterType;
+        var settings = Activator.CreateInstance(settingsType);
+        object contexts;
+        try
+        {
+            contexts = getCompleter.Invoke(null, new object[] { q, settings });
+        }
+        catch (Exception ex)
+        {
+            EmitError("suggest_failed", ex);
+            return;
+        }
+        var suggestions = new List<object>();
+        if (contexts is System.Collections.IEnumerable e)
+        {
+            foreach (var ctx in e.Cast<object>().Take(20))
+            {
+                var ct = ctx.GetType();
+                var entry = new Dictionary<string, object> { { "kind", ct.Name } };
+                foreach (var p in ct.GetProperties())
+                {
+                    try
+                    {
+                        var v = p.GetValue(ctx);
+                        if (v == null) continue;
+                        if (v is string s) entry[p.Name] = s;
+                        else if (v is int i) entry[p.Name] = i;
+                        else if (v is bool b) entry[p.Name] = b;
+                        else if (v is System.Collections.IEnumerable ee && !(v is string))
+                        {
+                            var list = ee.Cast<object>().Take(10).Select(x => x?.ToString()).ToList();
+                            if (list.Count > 0) entry[p.Name] = list;
+                        }
+                        else entry[p.Name] = v.ToString();
+                    }
+                    catch { }
+                }
+                suggestions.Add(entry);
+            }
+        }
+        EmitJson(new Dictionary<string, object>
+        {
+            { "ok", true },
+            { "query", q },
+            { "suggestions", suggestions },
         });
     }
 

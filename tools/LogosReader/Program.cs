@@ -102,6 +102,18 @@ class Program
         out int nArticle,
         out int nOffset);
 
+    // Inverse of GetAbsoluteCharacterOffsetForArticle. Given a character offset
+    // in the resource's full text, returns the article that contains it and the
+    // offset WITHIN that article. Used to map LibrarySearch hits to readable
+    // article snippets.
+    [DllImport(SinaiInterop, CharSet = CharSet.Ansi, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.U1)]
+    static extern bool SinaiInterop_CTitle_GetArticleOffsetFromAbsoluteCharacter(
+        IntPtr title,
+        int nAbsoluteOffset,
+        out int nArticle,
+        out int nOffsetWithinArticle);
+
     // TOC functions
     [DllImport(SinaiInterop, CharSet = CharSet.Ansi, ExactSpelling = true)]
     static extern int SinaiInterop_CTitle_GetTOCRoot(IntPtr pTitle);
@@ -663,6 +675,21 @@ class Program
                 int tocRoot = SinaiInterop_CTitle_GetTOCRoot(title);
                 Console.Error.WriteLine($"[*] TOC root entry: {tocRoot}");
                 PrintTOC(title, tocRoot, 0);
+                break;
+
+            case "pos2article":
+                // articleNum carries the absolute character offset for this op.
+                bool ok = SinaiInterop_CTitle_GetArticleOffsetFromAbsoluteCharacter(
+                    title, articleNum, out int p2aArticle, out int p2aOffset);
+                if (!ok)
+                {
+                    Console.Error.WriteLine($"[!] pos2article failed for offset {articleNum}");
+                }
+                else
+                {
+                    Console.WriteLine($"article\t{p2aArticle}");
+                    Console.WriteLine($"offset\t{p2aOffset}");
+                }
                 break;
 
             case "find-article":
@@ -1518,6 +1545,20 @@ class Program
                                 continue;
                             }
                             mode = "article-meta";
+                            resourceFile = tokens[1];
+                            int.TryParse(tokens[2], out articleNum);
+                            break;
+
+                        case "pos2article":
+                            // Map an absolute character offset (e.g. from a LibrarySearch hit) to
+                            // the article# + offset-within-article that contains it.
+                            if (tokens.Count < 3)
+                            {
+                                Console.Error.WriteLine("[!] pos2article requires: pos2article <file> <abs-char-offset>");
+                                Console.WriteLine("---END---");
+                                continue;
+                            }
+                            mode = "pos2article";
                             resourceFile = tokens[1];
                             int.TryParse(tokens[2], out articleNum);
                             break;

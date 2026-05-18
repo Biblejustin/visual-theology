@@ -72,6 +72,31 @@ class LogosBatchReader:
         result = self._send_command(f"read {resource_file} {article_num} {max_chars}")
         return result if result else None
 
+    def pos2article(self, resource_file, abs_char_offset):
+        """Map an absolute character offset (e.g. from a LibrarySearch hit) to
+        the article that contains it.
+
+        Returns:
+            (article_num, offset_within_article) tuple, or None on failure.
+        """
+        result = self._send_command(f"pos2article {resource_file} {int(abs_char_offset)}")
+        if not result:
+            return None
+        article = None
+        offset = None
+        for line in result.split("\n"):
+            parts = line.split("\t")
+            if len(parts) == 2:
+                if parts[0] == "article":
+                    try: article = int(parts[1])
+                    except ValueError: pass
+                elif parts[0] == "offset":
+                    try: offset = int(parts[1])
+                    except ValueError: pass
+        if article is None:
+            return None
+        return (article, offset or 0)
+
     def list_articles(self, resource_file):
         """List all articles in a resource.
 

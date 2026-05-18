@@ -365,10 +365,12 @@ TOOL_DEFINITIONS = [
         "name": "search_library",
         "description": (
             "Full-text search across the ENTIRE Logos library (all 4,652 books) using "
-            "Logos' own search engine and 6.6 GB inverted index. Returns the top hits with "
-            "resource title, author, type, hit count, and section info. Unlike "
-            "find_commentary_paragraph, this reaches background monographs, dictionaries, "
-            "encyclopedias, study bibles, etc. — anything indexed by Logos. "
+            "Logos' own search engine and 6.6 GB inverted index. Returns one result per "
+            "resource (deduplicated) with title, author, type, score, total hit count, and "
+            "a list of relevant sections — each section includes a ~500-char snippet with "
+            "the query terms marked in «guillemets». "
+            "Unlike find_commentary_paragraph, this reaches background monographs, "
+            "dictionaries, encyclopedias, study bibles, etc. — anything indexed by Logos. "
             "Use this for topical/background research (e.g. 'patronage in the Greco-Roman "
             "world', 'imputation in Reformed theology', 'Adam-Christ typology'). For "
             "verse-keyed commentary on a specific passage, find_commentary_paragraph is "
@@ -385,16 +387,58 @@ TOOL_DEFINITIONS = [
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max documents to return (1-25). Default 10."
+                    "description": "Max resources to return (1-25). Default 10."
                 },
                 "resource_type": {
                     "type": "string",
                     "description": (
-                        "Optional Logos resource Type prefix to filter results. Common values: "
-                        "'text.monograph' (any monograph), 'text.monograph.commentary.bible' (verse "
-                        "commentaries), 'text.monograph.encyclopedia' (dictionaries), "
-                        "'text.monograph.study.bible' (study Bibles). Default: no filter."
+                        "Optional Logos Type prefix filter. Common values: "
+                        "'text.monograph' (any monograph), "
+                        "'text.monograph.commentary.bible' (verse commentaries), "
+                        "'text.monograph.encyclopedia' (dictionaries), "
+                        "'text.monograph.study.bible' (study Bibles)."
                     )
+                },
+                "author_contains": {
+                    "type": "string",
+                    "description": (
+                        "Optional case-insensitive substring on the Authors field. "
+                        "Useful to narrow to a specific author or editor."
+                    )
+                },
+                "include_workspaces": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, include Logos user-workspace docs (LLS:WS_* IDs — "
+                        "usually personal notes). Default false."
+                    )
+                },
+                "verse_filter": {
+                    "type": "string",
+                    "description": (
+                        "Optional Bible reference to scope the search to sections "
+                        "that intersect this passage. Format: 'Romans 3:21-26' or "
+                        "'John 1:1'. Composes with the text query as "
+                        "'(<query>) INTERSECTS <verse_filter>' in Logos syntax."
+                    )
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "suggest_search_terms",
+        "description": (
+            "Ask Logos' query parser for completions/refinements for a partial query. "
+            "Useful when search_library returns few results — the suggestions may "
+            "reveal alternative spellings, Greek/Hebrew lemmas, or related operators."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Partial query text to expand."
                 }
             },
             "required": ["query"]
@@ -437,6 +481,8 @@ def execute_tool(tool_name, tool_input, session_context):
             return _get_passage_context(tool_input, session_context)
         elif tool_name == "search_library":
             return _search_library(tool_input, session_context)
+        elif tool_name == "suggest_search_terms":
+            return _suggest_search_terms(tool_input, session_context)
         # ── Coaching Bridge Tools ──────────────────────────────────────
         elif tool_name == "get_active_commitment":
             from coaching_bridge import load_active_commitment
@@ -495,26 +541,30 @@ def _read_bible_passage(tool_input):
 def _search_library(tool_input, session_context):
     """Full-text search across the entire Logos library.
 
-    Wraps the LogosSearcher subprocess (Libronix.SearchEngine over the local
-    LibraryIndex). Returns the top hits with title, author, type, hit count.
-
-    Optionally filter by resource Type prefix (e.g. 'text.monograph' to only
-    return monographs). Snippet text is not yet included — the LLM gets enough
-    metadata to decide which resource to read, then can call read_article or
-    find_commentary_paragraph for the actual passage.
+    Wraps the LogosSearcher subprocess. Returns one entry per resource (deduplicated)
+    with title/author/type, a normalized score, total hit count, and a list of
+    relevant sections — each with a snippet showing query terms in «guillemets».
     """
     query = (tool_input.get("query") or "").strip()
     if not query:
         return {"error": "query is required"}
     limit = max(1, min(int(tool_input.get("limit", 10)), 25))
     type_prefix = (tool_input.get("resource_type") or "").strip() or None
+    author_contains = (tool_input.get("author_contains") or "").strip() or None
+    include_workspaces = bool(tool_input.get("include_workspaces", False))
+    verse_filter = (tool_input.get("verse_filter") or "").strip() or None
 
     try:
         from logos_search import get_searcher
         searcher = get_searcher()
-        # Over-fetch a bit when filtering by type, since the filter is post-hoc.
-        fetch_limit = limit * 3 if type_prefix else limit
-        result = searcher.search(query, limit=fetch_limit)
+        result = searcher.search(
+            query,
+            limit=limit,
+            resource_type_prefix=type_prefix,
+            author_contains=author_contains,
+            exclude_workspaces=not include_workspaces,
+            verse_filter=verse_filter,
+        )
     except Exception as e:
         return {"error": f"search_failed: {type(e).__name__}: {e}"}
 
@@ -522,28 +572,31 @@ def _search_library(tool_input, session_context):
         return {"error": result.get("error", "unknown"),
                 "message": result.get("message", "")}
 
-    hits = result.get("hits") or []
-    if type_prefix:
-        hits = [h for h in hits if (h.get("type") or "").startswith(type_prefix)]
-    hits = hits[:limit]
-
+    results = result.get("results") or []
     return {
         "query": query,
-        "results": [
-            {
-                "resource_id": h.get("resource_id"),
-                "title": h.get("title"),
-                "abbrev": h.get("abbrev"),
-                "authors": h.get("authors"),
-                "type": h.get("type"),
-                "filename": h.get("filename"),
-                "hit_count": h.get("hit_count"),
-                "section_offset": h.get("section_offset"),
-                "section_length": h.get("section_length"),
-            }
-            for h in hits
-        ],
-        "result_count": len(hits),
+        "result_count": len(results),
+        "results": results,
+    }
+
+
+def _suggest_search_terms(tool_input, session_context):
+    """Get query completions/refinements from Logos' query parser."""
+    query = (tool_input.get("query") or "").strip()
+    if not query:
+        return {"error": "query is required"}
+    try:
+        from logos_search import get_searcher
+        searcher = get_searcher()
+        result = searcher.suggest(query)
+    except Exception as e:
+        return {"error": f"suggest_failed: {type(e).__name__}: {e}"}
+    if not result.get("ok"):
+        return {"error": result.get("error", "unknown"),
+                "message": result.get("message", "")}
+    return {
+        "query": query,
+        "suggestions": result.get("suggestions") or [],
     }
 
 
