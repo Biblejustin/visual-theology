@@ -246,3 +246,78 @@ class ChristThreadProposer:
         from llm_client import AnthropicClient
         from app_secrets import anthropic_api_key
         return AnthropicClient(api_key=anthropic_api_key())
+
+
+_WISDOM_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'principles': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'principle': {'type': 'string'},
+                    'rationale': {'type': 'string'},
+                    'cross_refs': {'type': 'array', 'items': {'type': 'string'}},
+                    'principle_tags': {'type': 'array', 'items': {'type': 'string'}},
+                },
+                'required': ['principle', 'rationale'],
+            },
+        },
+    },
+    'required': ['principles'],
+}
+
+_WISDOM_SYSTEM = (
+    "Distill 2-3 transferable wisdom principles from the passage. Each principle "
+    "should be a single proverbial sentence that carries beyond the specific "
+    "situation in the text. Give a brief rationale grounded in the text, 1-3 "
+    "cross-references (preferring wisdom literature — Proverbs, Job, Ecclesiastes "
+    "— and Pauline epistles), and a short list of topical tags. Avoid generic "
+    "moralism: each principle should be something a Reformed pastor would happily "
+    "preach as a sub-point."
+)
+
+
+class WisdomPrinciples:
+    """Extract transferable wisdom principles from the passage."""
+
+    name = 'find_wisdom_principles'
+
+    def __init__(self, llm=None):
+        self._llm = llm
+
+    def run(self, db, *, session_id: int, passage: dict, count: int = 3) -> list:
+        llm = self._llm or self._default_llm()
+        prompt = f"Passage: {passage.get('passage_ref', '?')}\nRequested principles: {count}"
+        result = llm.call(
+            prompt=prompt, schema=_WISDOM_SCHEMA,
+            system=_WISDOM_SYSTEM,
+            tool_name='emit_wisdom_principles',
+            tool_description='Emit transferable wisdom principles from the passage.',
+        )
+        if 'error' in result or 'output' not in result:
+            return []
+        principles = result['output'].get('principles') or []
+        results = []
+        for p in principles[:count]:
+            cross_refs = list(p.get('cross_refs') or [])
+            insight = Insight(
+                kind='wisdom',
+                title=p['principle'][:100],
+                body=f"**{p['principle']}**\n\n{p['rationale']}",
+                citations=cross_refs,
+                confidence=0.80,
+                metadata={
+                    'principle_tags': list(p.get('principle_tags') or []),
+                    'cross_refs': cross_refs,
+                },
+            )
+            persist(db, insight, session_id=session_id, source_tool=self.name)
+            results.append(insight)
+        return results
+
+    def _default_llm(self):
+        from llm_client import AnthropicClient
+        from app_secrets import anthropic_api_key
+        return AnthropicClient(api_key=anthropic_api_key())
