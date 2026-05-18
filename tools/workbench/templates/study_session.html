@@ -63,6 +63,12 @@
             </div>
 
             {% else %}
+            {% if persona == 'silent' %}
+            <div id="silent-phase-notice">
+              <p>This is a heart and devotion phase. The AI is silent here.</p>
+              <p>Return when you've finished your prayer / translation / digest work.</p>
+            </div>
+            {% else %}
             <div id="conversation-column">
                 <div id="conversation-thread">
                     {% for msg in messages %}
@@ -80,6 +86,7 @@
                     <button id="btn-study-send">Send</button>
                 </div>
             </div>
+            {% endif %}
             {% endif %}
 
             {% if linked_sermons or candidates %}

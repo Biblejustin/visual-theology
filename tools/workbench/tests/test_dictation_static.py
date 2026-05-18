@@ -35,7 +35,7 @@ def test_dictation_retries_default_mic_when_selected_device_constraint_fails():
 def test_study_session_uses_current_dictation_asset_version():
     html = _read("templates/study_session.html")
 
-    assert "/static/study.css?v=7" in html
+    assert "/static/study.css?v=9" in html
     assert "/static/dictation.js?v=8" in html
 
 
