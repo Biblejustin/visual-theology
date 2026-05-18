@@ -31,6 +31,19 @@ if _env_file.exists():
             v = v.strip().strip('"').strip("'")
             os.environ.setdefault(k.strip(), v)
 
+# Pin embedding model + framework caches to the external drive so we don't
+# bloat the system disk. Set BEFORE any import that might pull in torch
+# or sentence-transformers.
+_EXT = "/Volumes/External/Logos4/Data"
+os.environ.setdefault("HF_HOME", f"{_EXT}/huggingface")
+os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", f"{_EXT}/huggingface/sentence-transformers")
+os.environ.setdefault("TORCH_HOME", f"{_EXT}/torch")
+# Extend sys.path with the externally-installed dependencies so workbench
+# imports of sentence_transformers/torch/numpy resolve to the external copy.
+_DEPS = f"{_EXT}/python-deps"
+if os.path.isdir(_DEPS) and _DEPS not in sys.path:
+    sys.path.insert(0, _DEPS)
+
 import bcrypt
 import sqlite3
 from functools import wraps
