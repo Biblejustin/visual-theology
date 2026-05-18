@@ -97,6 +97,22 @@ CREATE INDEX IF NOT EXISTS idx_insights_session_kind ON homiletics_insights(sess
 CREATE INDEX IF NOT EXISTS idx_insights_session_created ON homiletics_insights(session_id, created_at);
 ```
 
+Two columns added to `outline_nodes` for BalanceGauger's tag cache:
+
+```sql
+ALTER TABLE outline_nodes ADD COLUMN homiletical_type TEXT CHECK (
+    homiletical_type IS NULL OR homiletical_type IN (
+        'exegetical_claim', 'application', 'illustration', 'christ_thread',
+        'question', 'transition', 'other'
+    )
+);
+ALTER TABLE outline_nodes ADD COLUMN homiletical_type_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_outline_nodes_session_type
+    ON outline_nodes(session_id, homiletical_type);
+```
+
+BalanceGauger skips re-tagging when `homiletical_type IS NOT NULL AND homiletical_type_at >= outline_nodes.updated_at`. New nodes and edited nodes go through Opus tagging on the next gauge call.
+
 Sermon-evaluation table for CoherenceChecker is already in place (`sermon_evaluations`, used by the existing sermon evaluator).
 
 For embedding storage we need a small companion table so CoherenceChecker can look up prior claims by similarity without re-embedding every time:
@@ -147,12 +163,12 @@ Each analyzer is a class with a `run()` method that returns `list[Insight]` and 
 
 | Analyzer class | `run()` signature | Method |
 |----------------|-------------------|--------|
-| `IllustrationFinder` | `run(db, theme: str, passage: dict \| None = None, count: int = 3) -> list[Insight]` | Calls `logos_search.get_searcher().search()` with `resource_type_prefix='text.monograph'`. Re-ranks snippets by a narrative-concreteness signal: count of Title Case name sequences (regex `\b[A-Z][a-z]+(?: [A-Z][a-z]+){0,2}\b`), year mentions (`\b1?[0-9]{3,4}\b`), and place-name density (lookup against a small built-in gazetteer of biblical + classical place names). Snippets with score above a fixed threshold survive. Wraps each surviving snippet as an `Insight(kind='illustration', citations=[resource_id], confidence=score)`. |
+| `IllustrationFinder` | `run(db, theme: str, passage: dict \| None = None, count: int = 3) -> list[Insight]` | Calls `logos_search.get_searcher().search()` with `resource_type_prefix='text.monograph'`, requesting `count*5` candidate snippets. Sends candidates to Opus 4.6 in a single ranking call: "Rank these N snippets as sermon illustrations for theme T. Score each 0-1 on narrative concreteness (named people, dates, places, story arc) and vividness. Return the top `count` with a one-line rationale." Wraps each surviving snippet as an `Insight(kind='illustration', citations=[resource_id], confidence=opus_score, metadata={'rationale': '...', 'theme_tags': [...]})`. |
 | `ObjectionFinder` | `run(db, claim: str, passage: dict | None = None, count: int = 3) -> list[Insight]` | Two-pronged: (a) `search_library` for monographs that engage common objections (apologetics resources, systematic theology); (b) single Opus call with a system prompt naming the four categories (theological, pastoral, cultural, honest_doubt) and asking for likely objections + rebuttal pointers. Merges results; tags each with `objection_class`. |
 | `CounselingApplications` | `run(db, passage: dict, count: int = 3) -> list[Insight]` | `search_library` filtered to biblical-counseling/pastoral resources, plus an Opus pass mapping the passage to common pastoral situations. Each insight tagged with `pastoral_situation`. |
 | `WisdomPrinciples` | `run(db, passage: dict, count: int = 3) -> list[Insight]` | Opus call distilling 2-3 transferable principles. Cross-refs via `search_library` to wisdom literature (Proverbs, Job, Ecclesiastes, Sirach if owned) and Puritan/patristic applications. |
 | `ChristThreadProposer` | `run(db, passage: dict, point: str \| None = None, count: int = 3) -> list[Insight]` | Single Opus call with a Reformed homiletical system prompt that names the five categories (typology / promise_fulfillment / contrast / redemptive_historical / direct_reference) and asks for up to `count` angles distributed across them. Each angle is returned as one `Insight` with category in metadata and 1-2 supporting verse refs in `citations`. |
-| `BalanceGauger` | `run(db, session_id: int) -> list[Insight]` | Reads `outline_nodes` for the session. If a node has no homiletical_type tag, runs an Opus tagging pass classifying each as `exegetical_claim` / `application` / `illustration` / `christ_thread`. Returns ONE summary insight with `metadata.ratio_exegetical`, plus zero-or-more flag insights for sections that are 100% exegetical. |
+| `BalanceGauger` | `run(db, session_id: int) -> list[Insight]` | Reads all `outline_nodes` for the session. For each node where `homiletical_type IS NULL` OR `updated_at > homiletical_type_at`, batches it into a single Opus tagging call classifying each as `exegetical_claim` / `application` / `illustration` / `christ_thread` / `question` / `transition` / `other`. Writes the tag back to `outline_nodes.homiletical_type` + sets `homiletical_type_at = now()` so subsequent runs skip unchanged nodes. Computes per-section ratios using all node tags. Returns ONE summary insight with `metadata.ratio_exegetical`, plus zero-or-more flag insights for sections that are 100% exegetical or 100% application (both directions). |
 | `CoherenceChecker` | `run(db, claim: str, session_id: int, lookback_days: int = 365) -> list[Insight]` | Embeds the claim via `voyage-3`. Loads embeddings for prior outline-node claims + sermon-evaluation claims within the lookback window, embedding any unembedded ones lazily. Returns top-3 above similarity threshold 0.75; flags as `conflict=True` if a fast Opus call judges the prior position contradicts. |
 
 All analyzers write their produced insights to `homiletics_insights` via `db.save_insight(insight, session_id, source_tool)` and return the list to the caller.
@@ -171,24 +187,49 @@ All analyzers write their produced insights to `homiletics_insights` via `db.sav
 
 Each tool definition includes a docstring naming the prep phase it's most useful in, so the LLM picks well.
 
-### Embeddings client
+### Embeddings client (local model)
+
+CoherenceChecker uses `BAAI/bge-large-en-v1.5` via `sentence-transformers`, running entirely locally. No API keys, no network dependency, no per-query cost. Model weights and all framework caches are pinned to the external drive to avoid bloating the system disk.
 
 `tools/workbench/embeddings_client.py` exposes:
 
 ```python
-class EmbeddingsClient:
-    def __init__(self, api_key: str, model: str = 'voyage-3'): ...
-    def embed(self, texts: list[str]) -> list[list[float]]: ...   # batch
+class LocalEmbeddingsClient:
+    """Wraps sentence-transformers SentenceTransformer.
+
+    Lazy-loads the model on first embed() call. Subsequent calls reuse the
+    in-process model. Thread-safe via a single mutex around encode().
+    """
+    def __init__(self, model_name: str = 'BAAI/bge-large-en-v1.5'): ...
+    def embed(self, texts: list[str]) -> list[list[float]]: ...
     def embed_one(self, text: str) -> list[float]: ...
     @property
-    def dimension(self) -> int: ...   # 1024 for voyage-3
+    def dimension(self) -> int: ...   # 1024 for bge-large-en-v1.5
 ```
 
-Vectors are stored in `claim_embeddings.embedding` as packed `float32` bytes (`struct.pack(f'{dimension}f', *vector)`). Cosine similarity is computed in Python via `numpy.dot` on unpacked vectors. With ~1000 prior claims and 1024-dim float32 vectors, in-memory ranking is well under a millisecond — no vector index needed in Phase 1.
+**Storage on external drive — required setup, done once via a small bootstrap script:**
 
-Production uses Voyage AI's HTTP API. Tests use a `CannedEmbeddingsClient` returning deterministic 8-dim vectors keyed by text hash, matching the pattern of `CannedLLMClient` in `llm_client.py`.
+```bash
+# tools/setup_embeddings.sh
+export HF_HOME=/Volumes/External/Logos4/Data/huggingface
+export SENTENCE_TRANSFORMERS_HOME=/Volumes/External/Logos4/Data/huggingface/sentence-transformers
+export TORCH_HOME=/Volumes/External/Logos4/Data/torch
+mkdir -p "$HF_HOME" "$SENTENCE_TRANSFORMERS_HOME" "$TORCH_HOME"
+pip install --target /Volumes/External/Logos4/Data/python-deps \
+    sentence-transformers torch numpy
+python3 -c "from sentence_transformers import SentenceTransformer; \
+    SentenceTransformer('BAAI/bge-large-en-v1.5')"   # downloads to HF_HOME
+```
 
-API key lives in `app_secrets.voyage_api_key()` alongside the existing Anthropic key. Cost: ~$0.00005 per embedding at Voyage 3 prices; negligible at sermon-prep scale.
+The Flask app sets these env vars at startup (in `app.py` before the workbench imports) so the workbench process picks up the external-drive paths. `sys.path` is extended with `/Volumes/External/Logos4/Data/python-deps` so the deps are found without polluting system Python.
+
+**Disk footprint on external drive:** ~1.3 GB model weights + ~2.5 GB torch + sentence-transformers + numpy + transformers + tokenizers ≈ 4 GB total. All under `/Volumes/External/Logos4/Data/`.
+
+**Vector storage:** `claim_embeddings.embedding` stores packed `float32` bytes (`struct.pack('1024f', *vector)`). Cosine similarity computed in Python via `numpy.dot` on unpacked vectors. With ~1000 prior claims and 1024-dim vectors, in-memory ranking is well under a millisecond — no vector index needed in Phase 1.
+
+**First-call latency:** ~3-5 seconds to load the model into memory on the workbench's first `embed()` call. Acceptable for a sermon-prep tool. Subsequent calls are sub-100ms per claim.
+
+Tests use a `CannedEmbeddingsClient` returning deterministic 8-dim vectors keyed by text hash, matching the pattern of `CannedLLMClient` in `llm_client.py`. Tests never load the real model.
 
 ### Data flow — example
 
@@ -255,5 +296,7 @@ For the engine end-to-end (`tests/test_homiletics_engine_e2e.py`):
 
 - **Analyzer count:** 7 (the original 4 + objection + counseling + wisdom). Confirmed.
 - **Tool surface:** 7 separate tools, no router. Consolidate later if needed.
-- **Coherence method:** Voyage 3 embeddings with keyword-overlap fallback.
+- **IllustrationFinder ranking:** Opus 4.6 ranks candidates (no regex heuristic). Higher quality, one extra Opus call per illustration request.
+- **BalanceGauger caching:** `outline_nodes.homiletical_type` + `homiletical_type_at` columns cache the LLM-assigned tag; subsequent gauge calls only re-tag changed/new nodes.
+- **Coherence method:** Local `BAAI/bge-large-en-v1.5` embeddings via `sentence-transformers`. Model + framework caches stored on the external drive (`/Volumes/External/Logos4/Data/`). No API keys, no network dependency, no recurring cost. Keyword-overlap fallback if the model fails to load.
 - **Insight type:** ship with the 6 proposed fields; no `severity` or `phase` until Phase 3/4 needs them.
