@@ -155,3 +155,94 @@ class IllustrationFinder:
         from llm_client import AnthropicClient
         from app_secrets import anthropic_api_key
         return AnthropicClient(api_key=anthropic_api_key())
+
+
+_CHRIST_THREAD_CATEGORIES = (
+    'typology', 'promise_fulfillment', 'contrast',
+    'redemptive_historical', 'direct_reference',
+)
+
+_CHRIST_THREAD_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'angles': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'category': {'type': 'string', 'enum': list(_CHRIST_THREAD_CATEGORIES)},
+                    'angle': {'type': 'string'},
+                    'rationale': {'type': 'string'},
+                    'supporting_refs': {'type': 'array', 'items': {'type': 'string'}},
+                },
+                'required': ['category', 'angle', 'rationale'],
+            },
+        },
+    },
+    'required': ['angles'],
+}
+
+_CHRIST_THREAD_SYSTEM = (
+    "You propose Christ-thread angles for sermon prep from a Reformed homiletical "
+    "perspective. Use these five categories, in descending preference for the "
+    "passage:\n"
+    "  - direct_reference: the text names or describes Christ directly\n"
+    "  - promise_fulfillment: a promise the text makes that Christ fulfills (or vice versa)\n"
+    "  - typology: a person, event, or institution that prefigures Christ\n"
+    "  - contrast: how the text shows the inability that Christ alone meets\n"
+    "  - redemptive_historical: where this passage sits in salvation history with Christ at the center\n"
+    "For each angle: state it in one sentence, give a one-line rationale tied to the "
+    "text, and cite 1-2 supporting biblical references. Distribute across categories "
+    "where the text supports it; do not force five if fewer fit."
+)
+
+
+class ChristThreadProposer:
+    """Propose Christ-thread angles for the passage (optionally focused on a point)."""
+
+    name = 'suggest_christ_thread'
+
+    def __init__(self, llm=None):
+        self._llm = llm
+
+    def run(self, db, *, session_id: int, passage: dict,
+            point: str = None, count: int = 3) -> list:
+        llm = self._llm or self._default_llm()
+        prompt = self._build_prompt(passage, point, count)
+        result = llm.call(
+            prompt=prompt, schema=_CHRIST_THREAD_SCHEMA,
+            system=_CHRIST_THREAD_SYSTEM,
+            tool_name='emit_christ_thread_angles',
+            tool_description='Emit Christ-thread angles for the passage.',
+        )
+        if 'error' in result or 'output' not in result:
+            return []
+        angles = result['output'].get('angles') or []
+        results = []
+        for a in angles[:count]:
+            insight = Insight(
+                kind='christ_thread',
+                title=f"{a['category']}: {a['angle'][:80]}",
+                body=f"**{a['angle']}**\n\n{a['rationale']}",
+                citations=list(a.get('supporting_refs') or []),
+                confidence=0.85,
+                metadata={
+                    'category': a['category'],
+                    'supporting_refs': list(a.get('supporting_refs') or []),
+                },
+            )
+            persist(db, insight, session_id=session_id, source_tool=self.name)
+            results.append(insight)
+        return results
+
+    def _build_prompt(self, passage: dict, point: str, count: int) -> str:
+        ref = passage.get('passage_ref') or '?'
+        lines = [f"Passage: {ref}", f"Requested angles: {count}"]
+        if point:
+            lines.append(f"Specific point under consideration: {point}")
+        return "\n".join(lines)
+
+    def _default_llm(self):
+        from llm_client import AnthropicClient
+        from app_secrets import anthropic_api_key
+        return AnthropicClient(api_key=anthropic_api_key())
