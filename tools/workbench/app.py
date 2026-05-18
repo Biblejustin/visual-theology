@@ -62,6 +62,7 @@ from companion_db import CompanionDB, PHASES_ORDER, PHASE_TIMERS
 from companion_agent import stream_companion_response, PHASE_DESCRIPTIONS
 from companion_agent import build_study_prompt, stream_study_response
 from session_analytics import SessionAnalytics
+from accuser_detector import AccuserDetector
 from genre_map import get_genre
 from seed_questions import seed_question_bank
 from series_planner import propose_series_plan
@@ -217,6 +218,7 @@ def safe_assistant_filter(content):
 
 companion_db = None
 study_analytics = None
+accuser_detector = None
 
 # Module-level cache for get_db() — tests reset this via `_db_instance = None`
 # to force re-creation after monkeypatching COMPANION_DB_PATH.
@@ -244,13 +246,16 @@ def startup():
     db.init_db()
     init_batch_reader()
     # Initialize companion DB
-    global companion_db, study_analytics
+    global companion_db, study_analytics, accuser_detector
     db_path = os.environ.get("COMPANION_DB_PATH", str(TOOLS_DIR / "workbench" / "companion.db"))
     companion_db = CompanionDB(db_path)
     companion_db.init_db()
     # Initialize analytics DB
     study_analytics = SessionAnalytics(db_path)
     study_analytics.init_db()
+    # Initialize accuser-voice detector (Cycle 2a: detection-only)
+    accuser_detector = AccuserDetector(db_path)
+    accuser_detector.init_db()
     # Seed question bank if empty
     if not companion_db.get_questions('prayer'):
         seed_question_bank(companion_db)
@@ -838,7 +843,7 @@ def companion_discuss(session_id):
         return jsonify({"error": "message required"}), 400
 
     return Response(
-        stream_companion_response(session_id, message, companion_db),
+        stream_companion_response(session_id, message, companion_db, accuser=accuser_detector),
         mimetype="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1176,7 +1181,7 @@ def study_discuss(session_id):
         study_analytics.record_message(session_id, 'user', len(message))
 
     return Response(
-        stream_study_response(session_id, message, companion_db, study_analytics),
+        stream_study_response(session_id, message, companion_db, study_analytics, accuser=accuser_detector),
         mimetype="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

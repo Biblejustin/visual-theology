@@ -273,10 +273,13 @@ def _sse_event(event_type, data):
     return f"data: {json.dumps({'type': event_type, **data})}\n\n"
 
 
-def stream_companion_response(session_id, user_message, db, model='claude-sonnet-4-20250514'):
+def stream_companion_response(session_id, user_message, db, model='claude-sonnet-4-20250514', accuser=None):
     """Generator yielding SSE events for a streaming companion response.
 
     Handles multi-turn tool use with the Claude API streaming.
+
+    `accuser`, if provided, is an AccuserDetector that observes the incoming
+    user message and logs trigger pattern matches. Detection-only — no rebuttal.
     """
     try:
         import anthropic
@@ -337,8 +340,15 @@ def stream_companion_response(session_id, user_message, db, model='claude-sonnet
     # Add current user message
     messages.append({'role': 'user', 'content': user_message})
 
-    # Save user message
-    db.save_message(session_id, phase, 'user', user_message)
+    # Save user message + accuser-voice detection (Cycle 2a: log-only)
+    mid = db.save_message(session_id, phase, 'user', user_message)
+    if accuser is not None:
+        try:
+            accuser.analyze_message(
+                session_id=session_id, message_id=mid,
+                surface='companion', text=user_message)
+        except Exception:
+            pass  # detection is observational; never block the user flow
 
     # Session context for tool execution
     session_context = {
@@ -662,7 +672,7 @@ use by the pre-flight review and post-preach learning phases (not in Phase 1).
 
 
 def stream_study_response(session_id, user_message, db, analytics=None,
-                          model='claude-sonnet-4-20250514'):
+                          model='claude-sonnet-4-20250514', accuser=None):
     """Generator yielding SSE events for conversation-first study streaming.
 
     Uses full conversation history (not phase-scoped) for natural multi-session flow.
@@ -738,8 +748,15 @@ def stream_study_response(session_id, user_message, db, analytics=None,
     # Add current user message
     messages.append({'role': 'user', 'content': user_message})
 
-    # Save user message (phase='study' — not phase-scoped)
-    db.save_message(session_id, 'study', 'user', user_message)
+    # Save user message + accuser-voice detection (Cycle 2a: log-only)
+    mid = db.save_message(session_id, 'study', 'user', user_message)
+    if accuser is not None:
+        try:
+            accuser.analyze_message(
+                session_id=session_id, message_id=mid,
+                surface='study', text=user_message)
+        except Exception:
+            pass  # detection is observational; never block the user flow
 
     # Session context for tool execution
     session_context = {
