@@ -439,3 +439,81 @@ class ObjectionFinder:
         from llm_client import AnthropicClient
         from app_secrets import anthropic_api_key
         return AnthropicClient(api_key=anthropic_api_key())
+
+
+_COUNSELING_TIERS = ('preventative', 'remedial', 'diagnostic')
+
+_COUNSELING_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'applications': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'pastoral_situation': {'type': 'string'},
+                    'application': {'type': 'string'},
+                    'tier': {'type': 'string', 'enum': list(_COUNSELING_TIERS)},
+                    'cross_refs': {'type': 'array', 'items': {'type': 'string'}},
+                },
+                'required': ['pastoral_situation', 'application', 'tier'],
+            },
+        },
+    },
+    'required': ['applications'],
+}
+
+_COUNSELING_SYSTEM = (
+    "Map this passage to common pastoral-counseling situations the preacher might "
+    "address. For each: name the situation in one or two words "
+    "(e.g. 'anxiety', 'marriage_conflict', 'guilt', 'addiction', 'grief', 'doubt', "
+    "'self_righteousness'), give a one-paragraph application targeted to someone in "
+    "that situation, tag the tier:\n"
+    "  - preventative: forming healthy patterns before crisis\n"
+    "  - remedial: healing/restoration where there's already damage\n"
+    "  - diagnostic: helping the person recognize the issue\n"
+    "and give 1-2 cross-references from Scripture or biblical-counseling literature."
+)
+
+
+class CounselingApplications:
+    """Map a passage to common pastoral-counseling situations."""
+
+    name = 'find_counseling_applications'
+
+    def __init__(self, llm=None):
+        self._llm = llm
+
+    def run(self, db, *, session_id: int, passage: dict, count: int = 3) -> list:
+        llm = self._llm or self._default_llm()
+        result = llm.call(
+            prompt=f"Passage: {passage.get('passage_ref', '?')}\nRequested applications: {count}",
+            schema=_COUNSELING_SCHEMA, system=_COUNSELING_SYSTEM,
+            tool_name='emit_counseling_applications',
+            tool_description='Emit pastoral-counseling applications.',
+        )
+        if 'error' in result or 'output' not in result:
+            return []
+        apps = result['output'].get('applications') or []
+        results = []
+        for a in apps[:count]:
+            cross_refs = list(a.get('cross_refs') or [])
+            insight = Insight(
+                kind='counseling',
+                title=f"[{a['tier']}] {a['pastoral_situation']}",
+                body=a['application'],
+                citations=cross_refs,
+                confidence=0.80,
+                metadata={
+                    'pastoral_situation': a['pastoral_situation'],
+                    'tier': a['tier'],
+                },
+            )
+            persist(db, insight, session_id=session_id, source_tool=self.name)
+            results.append(insight)
+        return results
+
+    def _default_llm(self):
+        from llm_client import AnthropicClient
+        from app_secrets import anthropic_api_key
+        return AnthropicClient(api_key=anthropic_api_key())
