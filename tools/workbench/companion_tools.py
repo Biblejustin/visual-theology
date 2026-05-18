@@ -557,6 +557,34 @@ TOOL_DEFINITIONS = [
             "required": ["claim"],
         },
     },
+    {
+        "name": "lookup_mentor_position",
+        "description": (
+            "Look up what a named homiletical authority actually says on a topic, "
+            "to test Bryan's invoked-version against the actual source. Use when "
+            "Bryan attributes a standard or requirement to Prutow, Chapell, Robinson, "
+            "Beeke, Perkins, York, Macartney, Carrick, Micah Ramsey, or another "
+            "named pastor — especially when the standard sounds harsh, absolute, or "
+            "memory-shaped (the accuser-voice pattern often distorts authorities into "
+            "more-punitive-than-actual standards). Returns matching reference rows "
+            "with the cited position and source citation; empty result means we don't "
+            "have a verified reference yet for that mentor / topic combination."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mentor_key": {
+                    "type": "string",
+                    "description": "Lowercase mentor key — e.g., 'prutow', 'chapell', 'robinson', 'beeke', 'perkins', 'york', 'micah'.",
+                },
+                "topic": {
+                    "type": "string",
+                    "description": "Optional topic filter — e.g., 'main_point', 'fcf', 'sermon_length'. Omit to get all positions for the mentor.",
+                },
+            },
+            "required": ["mentor_key"],
+        },
+    },
 ]
 
 
@@ -610,6 +638,8 @@ def execute_tool(tool_name, tool_input, session_context):
             return _gauge_outline_balance(tool_input, session_context)
         elif tool_name == "check_sermon_coherence":
             return _check_sermon_coherence(tool_input, session_context)
+        elif tool_name == "lookup_mentor_position":
+            return _lookup_mentor_position(tool_input, session_context)
         # ── Coaching Bridge Tools ──────────────────────────────────────
         elif tool_name == "get_active_commitment":
             from coaching_bridge import load_active_commitment
@@ -1252,3 +1282,50 @@ def _check_sermon_coherence(tool_input, ctx):
         return {'insights': _serialize_insights(insights)}
     except Exception as e:
         return {'error': f'coherence_failed: {type(e).__name__}: {e}'}
+
+
+def _lookup_mentor_position(tool_input, ctx):
+    """Test the invoked-version of an authority against the actual source.
+
+    Returns matching reference rows from mentor_references. Empty result
+    means we don't have a verified reference yet — the LLM should NOT
+    fabricate; it should tell Bryan we don't have a verified source and
+    ask him to provide the actual quote or chapter so it can be captured.
+    """
+    mentor_key = (tool_input.get('mentor_key') or '').strip().lower()
+    topic = (tool_input.get('topic') or '').strip() or None
+    if not mentor_key:
+        return {'error': 'mentor_key is required'}
+    try:
+        from mentor_reference_store import MentorReferenceStore
+        store = MentorReferenceStore(ctx['db'].db_path)
+        rows = store.get_references(mentor_key=mentor_key, topic=topic)
+    except Exception as e:
+        return {'error': f'lookup_failed: {type(e).__name__}: {e}'}
+    if not rows:
+        return {
+            'mentor_key': mentor_key,
+            'topic': topic,
+            'references': [],
+            'note': (
+                f'No verified reference found for mentor_key={mentor_key!r}'
+                + (f' topic={topic!r}' if topic else '')
+                + '. Do NOT fabricate a position. Tell Bryan we lack a verified '
+                  'source for this and offer to capture the actual quote / '
+                  'chapter / page when he can provide it.'
+            ),
+        }
+    return {
+        'mentor_key': mentor_key,
+        'topic': topic,
+        'references': [
+            {
+                'source_title': r['source_title'],
+                'topic': r['topic'],
+                'position_text': r['position_text'],
+                'citation': r['citation'],
+                'verified': bool(r['verified']),
+            }
+            for r in rows
+        ],
+    }

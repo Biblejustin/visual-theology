@@ -278,6 +278,10 @@ def startup():
     # Initialize mentor reference store (Cycle 2c: substrate)
     mentor_store = MentorReferenceStore(db_path)
     mentor_store.init_db()
+    # One-shot seed of the starter example if the table is empty so
+    # lookup_mentor_position returns something on the first sermon cycle.
+    if not mentor_store.list_mentors():
+        mentor_store.seed_examples()
     # Initialize pastor feedback substrate (v2 §10.1)
     pastor_feedback = PastorFeedbackStore(db_path)
     pastor_feedback.init_db()
