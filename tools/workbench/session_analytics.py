@@ -6,8 +6,38 @@ silent to the user during active study.
 """
 
 import json
+import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
+
+
+def _resolve_local_tz():
+    """Bryan's local timezone for daily cutoff math.
+
+    Resolution order:
+    1. LOGOS_LOCAL_TZ env var (e.g. "America/Chicago" or "America/Denver")
+    2. System's actual local timezone (so it works on any machine without config)
+    3. Fall back to America/Chicago (Bryan's home Central time)
+    """
+    override = os.environ.get("LOGOS_LOCAL_TZ")
+    if override:
+        try:
+            return ZoneInfo(override)
+        except Exception:
+            pass
+    sys_tz = datetime.now().astimezone().tzinfo
+    if sys_tz is not None:
+        return sys_tz
+    return ZoneInfo("America/Chicago")
+
+
+LOCAL_TZ = _resolve_local_tz()
+DAILY_CUTOFF_HOUR = 17  # 5pm local — family time begins
 
 
 class SessionAnalytics:
@@ -55,9 +85,60 @@ class SessionAnalytics:
                 ON message_events(session_id);
             CREATE INDEX IF NOT EXISTS idx_outline_events_session
                 ON outline_events(session_id);
+            CREATE TABLE IF NOT EXISTS cutoff_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                route TEXT NOT NULL,
+                cutoff_type TEXT NOT NULL,
+                session_id INTEGER,
+                dismissed INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_cutoff_events_route_time
+                ON cutoff_events(route, timestamp);
         """)
         conn.commit()
         conn.close()
+
+    # ── Cutoff events (Cycle 1 advisory) ─────────────────────────────────
+
+    def is_past_daily_cutoff(self, now_utc=None, cutoff_hour=DAILY_CUTOFF_HOUR, tz=None):
+        """True if it's at or past the daily cutoff in Bryan's local time.
+
+        Defaults to LOCAL_TZ (system-local; see _resolve_local_tz). Tests pass
+        an explicit `tz` to make assertions deterministic across machines.
+        """
+        now_utc = now_utc or datetime.now(timezone.utc)
+        local = now_utc.astimezone(tz or LOCAL_TZ)
+        return local.hour >= cutoff_hour
+
+    def log_cutoff_event(self, route, cutoff_type, session_id=None):
+        conn = self._conn()
+        cur = conn.execute(
+            "INSERT INTO cutoff_events (timestamp, route, cutoff_type, session_id) "
+            "VALUES (?, ?, ?, ?)",
+            (self._now(), route, cutoff_type, session_id))
+        conn.commit()
+        event_id = cur.lastrowid
+        conn.close()
+        return event_id
+
+    def mark_cutoff_dismissed(self, event_id):
+        conn = self._conn()
+        conn.execute(
+            "UPDATE cutoff_events SET dismissed = 1 WHERE id = ?", (event_id,))
+        conn.commit()
+        conn.close()
+
+    def get_recent_cutoff_event(self, route, within_minutes=15):
+        """Most recent cutoff event for `route` within the window, else None."""
+        cutoff_iso = (datetime.now(timezone.utc) - timedelta(minutes=within_minutes)).isoformat()
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT * FROM cutoff_events WHERE route = ? AND timestamp >= ? "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (route, cutoff_iso)).fetchone()
+        conn.close()
+        return dict(row) if row else None
 
     # ── Phase tracking ──────────────────────────────────────────────────
 

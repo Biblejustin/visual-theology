@@ -266,6 +266,56 @@ atexit.register(shutdown)
 def inject_globals():
     return {"phases": PHASES}
 
+
+def _is_sermon_work_page_load(req):
+    """True for full GET page loads of sermon-work surfaces (not HTMX fragments)."""
+    if req.method != "GET":
+        return False
+    if req.headers.get("HX-Request"):
+        return False
+    path = req.path
+    return path.startswith("/companion/") or path.startswith("/study/")
+
+
+@app.context_processor
+def inject_cutoff_banner():
+    """Advisory cutoff banner (Cycle 1): notification + logging, no enforcement.
+
+    When sermon work surfaces are accessed past 5pm local, log the access (throttled
+    to one event per route per 15 min) and surface a dismissible banner. No disable,
+    no lockout — this is calibration to measure override frequency before enforcement.
+    """
+    if not study_analytics:
+        return {}
+    if not _is_sermon_work_page_load(request):
+        return {}
+    if not study_analytics.is_past_daily_cutoff():
+        return {}
+    recent = study_analytics.get_recent_cutoff_event(request.path, within_minutes=15)
+    if recent and recent["dismissed"]:
+        return {}
+    if recent:
+        event_id = recent["id"]
+    else:
+        event_id = study_analytics.log_cutoff_event(request.path, "daily_5pm")
+    return {"cutoff_banner_active": True, "cutoff_event_id": event_id}
+
+
+@app.route("/api/cutoff-events/<int:event_id>/dismiss", methods=["POST"])
+def api_dismiss_cutoff_event(event_id):
+    """Mark a cutoff event as dismissed so its banner stops rendering."""
+    if not study_analytics:
+        abort(503)
+    conn = study_analytics._conn()
+    row = conn.execute(
+        "SELECT id FROM cutoff_events WHERE id = ?", (event_id,)).fetchone()
+    conn.close()
+    if not row:
+        abort(404)
+    study_analytics.mark_cutoff_dismissed(event_id)
+    return ("", 204)
+
+
 # ── Page Routes ──────────────────────────────────────────────────────────
 
 @app.route("/")

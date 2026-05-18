@@ -31,13 +31,12 @@ def _port_in_use(port):
 def base_url():
     """Start Flask server as subprocess, yield base URL, kill on teardown."""
 
-    # Safety: warn if dev server is running (LogosReader native lib contention)
+    # Safety: skip E2E tests if dev server is running (LogosReader native lib contention).
+    # Yield None to keep non-E2E (unit/integration) tests running — pytest-base-url's
+    # autouse _verify_url checks `if base_url and verify:` and no-ops when base_url is None.
     if _port_in_use(5111):
-        pytest.exit(
-            "Port 5111 is in use (dev server running?). "
-            "Stop it before running E2E tests — LogosReader native lib cannot be shared.",
-            returncode=1,
-        )
+        yield None
+        return
 
     # Create temp DB
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)

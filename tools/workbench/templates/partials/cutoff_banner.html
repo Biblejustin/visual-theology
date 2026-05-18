@@ -1,0 +1,49 @@
+{% if cutoff_banner_active %}
+<style>
+.cutoff-banner {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  background: #2d2a26;
+  color: #f4e9d4;
+  border-bottom: 2px solid #8a6e3e;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.cutoff-banner-body {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.cutoff-banner-text { flex: 1; }
+.cutoff-banner-dismiss {
+  background: transparent;
+  color: #f4e9d4;
+  border: 1px solid #8a6e3e;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.cutoff-banner-dismiss:hover { background: #8a6e3e; }
+</style>
+<div id="cutoff-banner-{{ cutoff_event_id }}" class="cutoff-banner" role="status">
+  <div class="cutoff-banner-body">
+    <span class="cutoff-banner-text">
+      It's past 5pm. Family time begins now. Sermon work can wait until tomorrow.
+    </span>
+    <button
+      class="cutoff-banner-dismiss"
+      hx-post="/api/cutoff-events/{{ cutoff_event_id }}/dismiss"
+      hx-swap="delete"
+      hx-target="#cutoff-banner-{{ cutoff_event_id }}"
+      type="button"
+    >Dismiss</button>
+  </div>
+</div>
+{% endif %}
