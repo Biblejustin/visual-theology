@@ -321,3 +321,121 @@ class WisdomPrinciples:
         from llm_client import AnthropicClient
         from app_secrets import anthropic_api_key
         return AnthropicClient(api_key=anthropic_api_key())
+
+
+_OBJECTION_CLASSES = ('theological', 'pastoral', 'cultural', 'honest_doubt')
+
+_OBJECTION_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'objections': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'objection_class': {'type': 'string', 'enum': list(_OBJECTION_CLASSES)},
+                    'objection': {'type': 'string'},
+                    'rebuttal_pointer': {'type': 'string'},
+                },
+                'required': ['objection_class', 'objection', 'rebuttal_pointer'],
+            },
+        },
+    },
+    'required': ['objections'],
+}
+
+_OBJECTION_SYSTEM = (
+    "List likely objections a congregation might raise to this claim, drawn from "
+    "four categories:\n"
+    "  - theological: doctrinal pushback from non-Reformed positions\n"
+    "  - pastoral: 'but what if I/my situation...' (felt-need objections)\n"
+    "  - cultural: modern skepticism, scientific naturalism, moral intuitions\n"
+    "  - honest_doubt: thoughtful Christian wrestling that deserves charity\n"
+    "For each: state the objection in the objector's voice (one sentence), then "
+    "give a one-line rebuttal pointer (not a full answer — a direction to take in "
+    "preaching). Distribute across categories where realistic."
+)
+
+
+class ObjectionFinder:
+    """Find likely objections to a claim. Combines library search + LLM taxonomy."""
+
+    name = 'find_objections'
+
+    def __init__(self, searcher=None, llm=None):
+        self._searcher = searcher
+        self._llm = llm
+
+    def run(self, db, *, session_id: int, claim: str, count: int = 3,
+            passage: dict = None) -> list:
+        if not claim:
+            return []
+        llm_objections = self._llm_objections(claim, count)
+        # Reserve at least 60% for LLM-generated; allow a few from library if room.
+        llm_min = max(1, int(count * 0.6))
+        library_cap = max(0, count - llm_min)
+        from_library = self._library_objections(claim, library_cap) if library_cap else []
+        llm_take = max(llm_min, count - len(from_library))
+        from_llm = llm_objections[:llm_take]
+        combined = from_llm + from_library
+        results = []
+        for o in combined[:count]:
+            insight = Insight(
+                kind='objection',
+                title=f"[{o.get('objection_class', '?')}] {o['objection'][:80]}",
+                body=f"**Objection:** {o['objection']}\n\n**Direction:** {o['rebuttal_pointer']}",
+                citations=o.get('citations', []),
+                confidence=o.get('confidence', 0.75),
+                metadata={
+                    'objection_class': o.get('objection_class'),
+                    'source': o.get('source', 'llm'),
+                },
+            )
+            persist(db, insight, session_id=session_id, source_tool=self.name)
+            results.append(insight)
+        return results
+
+    def _llm_objections(self, claim: str, count: int) -> list:
+        llm = self._llm or self._default_llm()
+        result = llm.call(
+            prompt=f"Claim: {claim}\nProduce up to {count*2} objections.",
+            schema=_OBJECTION_SCHEMA, system=_OBJECTION_SYSTEM,
+            tool_name='emit_objections',
+            tool_description='Emit objections by category.',
+        )
+        if 'error' in result or 'output' not in result:
+            return []
+        return [{**o, 'source': 'llm'} for o in (result['output'].get('objections') or [])]
+
+    def _library_objections(self, claim: str, count: int) -> list:
+        if count <= 0:
+            return []
+        searcher = self._searcher or self._default_searcher()
+        try:
+            response = searcher.search(
+                f"objections to {claim}", limit=count * 3,
+                resource_type_prefix='text.monograph',
+            )
+        except Exception:
+            return []
+        results = []
+        for c in (response.get('results') or [])[:count]:
+            section = (c.get('sections') or [{}])[0]
+            results.append({
+                'objection_class': 'theological',
+                'objection': f"From {c.get('title', '?')}: {(section.get('snippet') or '')[:200]}",
+                'rebuttal_pointer': 'See the cited resource for the author\'s treatment.',
+                'citations': [c.get('resource_id')] if c.get('resource_id') else [],
+                'source': 'library',
+                'confidence': 0.6,
+            })
+        return results
+
+    def _default_searcher(self):
+        from logos_search import get_searcher
+        return get_searcher()
+
+    def _default_llm(self):
+        from llm_client import AnthropicClient
+        from app_secrets import anthropic_api_key
+        return AnthropicClient(api_key=anthropic_api_key())
