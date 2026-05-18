@@ -49,6 +49,7 @@
         <a href="/study/">← Study</a>
         <a href="/sermons/">Sermons</a>
         <a href="/sermons/patterns">Sermon patterns</a>
+        <a href="/study/feedback/new">+ Feedback</a>
     </div>
 
     <h1>Study Patterns</h1>
@@ -120,6 +121,32 @@
     </table>
     {% else %}
     <div class="empty">No detections in the window.</div>
+    {% endif %}
+
+    <h2>Pastor feedback (Olivia / elders / congregants)</h2>
+    {% if feedback_recent %}
+    <table>
+        <thead>
+            <tr>
+                <th>When</th>
+                <th>From</th>
+                <th>Tone</th>
+                <th>What</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for f in feedback_recent %}
+            <tr>
+                <td class="excerpt">{{ f.captured_at[:16] }}</td>
+                <td>{{ f.source_label }}</td>
+                <td><span class="pill cat">{{ f.valence }}</span></td>
+                <td>{{ f.content }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No feedback captured yet — <a href="/study/feedback/new" style="color:#c9b88a;">add one</a>.</div>
     {% endif %}
 
     <h2>Recent accuser-voice matches</h2>

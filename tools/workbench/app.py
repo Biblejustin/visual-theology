@@ -64,6 +64,7 @@ from companion_agent import build_study_prompt, stream_study_response
 from session_analytics import SessionAnalytics
 from accuser_detector import AccuserDetector
 from mentor_reference_store import MentorReferenceStore
+from pastor_feedback_store import PastorFeedbackStore
 from genre_map import get_genre
 from seed_questions import seed_question_bank
 from series_planner import propose_series_plan
@@ -221,6 +222,7 @@ companion_db = None
 study_analytics = None
 accuser_detector = None
 mentor_store = None
+pastor_feedback = None
 
 # Module-level cache for get_db() — tests reset this via `_db_instance = None`
 # to force re-creation after monkeypatching COMPANION_DB_PATH.
@@ -248,7 +250,7 @@ def startup():
     db.init_db()
     init_batch_reader()
     # Initialize companion DB
-    global companion_db, study_analytics, accuser_detector, mentor_store
+    global companion_db, study_analytics, accuser_detector, mentor_store, pastor_feedback
     db_path = os.environ.get("COMPANION_DB_PATH", str(TOOLS_DIR / "workbench" / "companion.db"))
     companion_db = CompanionDB(db_path)
     companion_db.init_db()
@@ -261,6 +263,9 @@ def startup():
     # Initialize mentor reference store (Cycle 2c: substrate)
     mentor_store = MentorReferenceStore(db_path)
     mentor_store.init_db()
+    # Initialize pastor feedback substrate (v2 §10.1)
+    pastor_feedback = PastorFeedbackStore(db_path)
+    pastor_feedback.init_db()
     # Seed question bank if empty
     if not companion_db.get_questions('prayer'):
         seed_question_bank(companion_db)
@@ -1043,6 +1048,37 @@ def study_index():
     return render_template("study_start.html", sessions=sessions, error=error)
 
 
+@app.route("/study/feedback/new", methods=["GET"])
+def study_feedback_new():
+    """Form for Bryan to capture feedback he received in person — Olivia,
+    elders, congregants. Olivia-direct channels layer on top of the same
+    substrate later (her choice of email/SMS/Dropbox/dashboard)."""
+    return render_template("study_feedback_new.html")
+
+
+@app.route("/study/feedback", methods=["POST"])
+def study_feedback_create():
+    """Persist a captured-feedback entry. Redirect back to the form with a
+    flash-style query param (no full flash infra used here)."""
+    if not pastor_feedback:
+        abort(503)
+    source = request.form.get("source_label", "").strip()
+    content = request.form.get("content", "").strip()
+    valence = request.form.get("valence", "positive").strip() or "positive"
+    sermon_id_raw = (request.form.get("sermon_id") or "").strip()
+    sermon_id = int(sermon_id_raw) if sermon_id_raw.isdigit() else None
+    if not source or not content:
+        return redirect(url_for("study_feedback_new", error="missing"))
+    try:
+        pastor_feedback.add_feedback(
+            source_label=source, content=content, valence=valence,
+            sermon_id=sermon_id, captured_by="bryan_typed",
+        )
+    except ValueError:
+        return redirect(url_for("study_feedback_new", error="invalid"))
+    return redirect(url_for("study_feedback_new", saved="1"))
+
+
 @app.route("/study/patterns")
 def study_patterns():
     """EF-prosthesis pattern review panel — cutoff overrides, accuser-voice
@@ -1059,6 +1095,8 @@ def study_patterns():
     accuser_cats = accuser_category_summary(accuser_detector, days=days) if accuser_detector else []
     accuser_recent = accuser_recent_examples(accuser_detector, limit=10) if accuser_detector else []
     session_stats = recent_session_activity(companion_db, days=days) if companion_db else {'active_sessions': 0}
+    feedback_recent = pastor_feedback.recent_feedback(limit=8) if pastor_feedback else []
+    feedback_counts = pastor_feedback.count_by_valence() if pastor_feedback else {}
     return render_template(
         "study_patterns.html",
         days=days,
@@ -1067,6 +1105,8 @@ def study_patterns():
         accuser_cats=accuser_cats,
         accuser_recent=accuser_recent,
         session_stats=session_stats,
+        feedback_recent=feedback_recent,
+        feedback_counts=feedback_counts,
     )
 
 

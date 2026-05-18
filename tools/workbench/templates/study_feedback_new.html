@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capture feedback — Sermon Study</title>
+    <style>
+      body {
+        font-family: -apple-system, system-ui, sans-serif;
+        background: #1a1814;
+        color: #e8e1d0;
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 24px;
+        line-height: 1.5;
+      }
+      h1 { font-size: 22px; margin: 0 0 4px; }
+      .subtitle { color: #8a8275; font-size: 13px; margin-bottom: 20px; }
+      .nav { margin-bottom: 20px; }
+      .nav a { color: #8a6e3e; text-decoration: none; margin-right: 14px; }
+      .nav a:hover { color: #c9b88a; }
+      .field { display: block; margin: 14px 0; }
+      .field label { display: block; font-size: 12px; color: #8a8275; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+      .field input[type=text], .field select, .field textarea {
+        width: 100%;
+        background: #232019;
+        color: #e8e1d0;
+        border: 1px solid #2d2a26;
+        border-radius: 4px;
+        padding: 8px 10px;
+        font-size: 14px;
+        font-family: inherit;
+        box-sizing: border-box;
+      }
+      .field textarea { min-height: 100px; resize: vertical; }
+      .row { display: flex; gap: 12px; }
+      .row .field { flex: 1; }
+      button {
+        background: #8a6e3e;
+        color: #1a1814;
+        border: none;
+        padding: 9px 18px;
+        border-radius: 4px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      button:hover { background: #c9b88a; }
+      .flash { padding: 10px 14px; border-radius: 4px; margin-bottom: 16px; font-size: 14px; }
+      .flash.saved { background: #1f3a2d; color: #c9eba7; }
+      .flash.error { background: #4d2a2a; color: #ebc9c9; }
+    </style>
+</head>
+<body>
+    {% include "partials/cutoff_banner.html" %}
+
+    <div class="nav">
+        <a href="/study/">← Study</a>
+        <a href="/study/patterns">Patterns</a>
+    </div>
+
+    <h1>Capture feedback</h1>
+    <div class="subtitle">
+        Olivia, elders, congregants — anything you heard that's worth not losing.
+        The Editing Partner reads recent positive feedback during Phase 15 audit.
+    </div>
+
+    {% if request.args.get('saved') %}
+    <div class="flash saved">Saved. Capture another, or head back to patterns.</div>
+    {% endif %}
+    {% if request.args.get('error') == 'missing' %}
+    <div class="flash error">Source and content are required.</div>
+    {% endif %}
+    {% if request.args.get('error') == 'invalid' %}
+    <div class="flash error">Invalid valence — must be positive / constructive / mixed.</div>
+    {% endif %}
+
+    <form method="POST" action="/study/feedback">
+        <div class="row">
+          <div class="field">
+            <label for="source_label">From</label>
+            <input
+              type="text" name="source_label" id="source_label"
+              placeholder="olivia / congregant / elder_x / self"
+              autofocus required>
+          </div>
+          <div class="field">
+            <label for="valence">Tone</label>
+            <select name="valence" id="valence">
+              <option value="positive">Positive</option>
+              <option value="constructive">Constructive</option>
+              <option value="mixed">Mixed</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="sermon_id">Sermon # (optional)</label>
+            <input type="text" name="sermon_id" id="sermon_id" placeholder="">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="content">What they said</label>
+          <textarea name="content" id="content"
+            placeholder="Verbatim if you can — paraphrase if you can't. Specific is better than general."
+            required></textarea>
+        </div>
+
+        <button type="submit">Save feedback</button>
+    </form>
+</body>
+</html>
