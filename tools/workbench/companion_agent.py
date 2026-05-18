@@ -804,11 +804,12 @@ def stream_study_response(session_id, user_message, db, analytics=None,
     # pastor_feedback lives in app.py as a module global; import lazily to
     # avoid circular import and degrade gracefully if not initialized.
     try:
-        from app import pastor_feedback as _pf
+        from app import pastor_feedback as _pf, session_decisions as _sd
     except ImportError:
-        _pf = None
+        _pf = _sd = None
     extra_context = context_for_persona(db, session_id, persona,
-                                        pastor_feedback_store=_pf)
+                                        pastor_feedback_store=_pf,
+                                        session_decision_store=_sd)
     system_prompt = select_persona_prompt(
         persona=persona,
         passage=session['passage_ref'],

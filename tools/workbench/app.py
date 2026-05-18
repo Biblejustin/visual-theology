@@ -65,6 +65,7 @@ from session_analytics import SessionAnalytics
 from accuser_detector import AccuserDetector
 from mentor_reference_store import MentorReferenceStore
 from pastor_feedback_store import PastorFeedbackStore
+from session_decisions import SessionDecisionStore, DECISION_KEYS
 from genre_map import get_genre
 from seed_questions import seed_question_bank
 from series_planner import propose_series_plan
@@ -223,6 +224,7 @@ study_analytics = None
 accuser_detector = None
 mentor_store = None
 pastor_feedback = None
+session_decisions = None
 
 # Module-level cache for get_db() — tests reset this via `_db_instance = None`
 # to force re-creation after monkeypatching COMPANION_DB_PATH.
@@ -250,7 +252,7 @@ def startup():
     db.init_db()
     init_batch_reader()
     # Initialize companion DB
-    global companion_db, study_analytics, accuser_detector, mentor_store, pastor_feedback
+    global companion_db, study_analytics, accuser_detector, mentor_store, pastor_feedback, session_decisions
     db_path = os.environ.get("COMPANION_DB_PATH", str(TOOLS_DIR / "workbench" / "companion.db"))
     companion_db = CompanionDB(db_path)
     companion_db.init_db()
@@ -266,6 +268,9 @@ def startup():
     # Initialize pastor feedback substrate (v2 §10.1)
     pastor_feedback = PastorFeedbackStore(db_path)
     pastor_feedback.init_db()
+    # Initialize session decisions tracker (codex review item #7)
+    session_decisions = SessionDecisionStore(db_path)
+    session_decisions.init_db()
     # Seed question bank if empty
     if not companion_db.get_questions('prayer'):
         seed_question_bank(companion_db)
@@ -1046,6 +1051,45 @@ def study_index():
     sessions = companion_db.list_sessions(status='active')
     error = request.args.get('error')
     return render_template("study_start.html", sessions=sessions, error=error)
+
+
+@app.route("/api/study/session/<int:session_id>/decision", methods=["POST"])
+def api_set_session_decision(session_id):
+    """Mark a homiletical decision committed for this session. Per codex
+    review item #7: ADHD work can look active while avoiding decisions —
+    explicit commits give the Composing Partner real signal."""
+    if not session_decisions:
+        abort(503)
+    data = request.get_json(silent=True) or request.form
+    key = (data.get("key") or "").strip()
+    value = (data.get("value") or "").strip()
+    if not key or not value:
+        return jsonify({"error": "key and value required"}), 400
+    try:
+        session_decisions.set_decision(session_id=session_id, key=key, value=value)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "key": key, "value": value})
+
+
+@app.route("/api/study/session/<int:session_id>/decision/<string:key>", methods=["DELETE"])
+def api_clear_session_decision(session_id, key):
+    if not session_decisions:
+        abort(503)
+    if key not in DECISION_KEYS:
+        return jsonify({"error": f"unknown decision key: {key}"}), 400
+    session_decisions.clear_decision(session_id, key)
+    return ("", 204)
+
+
+@app.route("/api/study/session/<int:session_id>/decisions", methods=["GET"])
+def api_list_session_decisions(session_id):
+    if not session_decisions:
+        return jsonify({"decisions": [], "open": list(DECISION_KEYS)})
+    return jsonify({
+        "decisions": session_decisions.list_decisions(session_id),
+        "open": session_decisions.open_decision_keys(session_id),
+    })
 
 
 @app.route("/study/feedback/new", methods=["GET"])

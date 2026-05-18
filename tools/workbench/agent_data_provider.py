@@ -213,22 +213,25 @@ def estimate_spoken_minutes_from_outline(db, session_id, words_per_min=150):
 
 # ── Persona dispatcher ──────────────────────────────────────────────────
 
-def context_for_persona(db, session_id, persona, pastor_feedback_store=None):
+def context_for_persona(db, session_id, persona,
+                         pastor_feedback_store=None,
+                         session_decision_store=None):
     """Return the extra-context kwargs the right persona prompt needs.
 
-    `pastor_feedback_store` is optional — when present, the Editing Partner
-    additionally gets positive-feedback context for the Phase 15 audit so
-    that affirmation stays visible alongside pattern critique.
-
-    Research persona doesn't need any extra context fields.
-    Silent persona has no prompt at all.
-    Unknown persona returns {} (safe — defaults take over).
+    Optional stores:
+      - `pastor_feedback_store` lets Editing Partner show Olivia / elder /
+        congregant positive feedback so affirmation stays visible during audit.
+      - `session_decision_store` lets Composing Partner see what's already
+        committed vs still open (codex review item #7).
     """
     if persona == 'composing':
-        return {
+        ctx = {
             'prior_phase_summary': fetch_prior_phase_summary(db, session_id),
             'sermon_coach_pattern_summary': fetch_sermon_coach_patterns(db),
         }
+        if session_decision_store is not None:
+            ctx['decision_summary'] = session_decision_store.format_decision_summary(session_id)
+        return ctx
     if persona == 'editing':
         commitment = load_active_commitment(db)
         ctx = {
@@ -241,5 +244,9 @@ def context_for_persona(db, session_id, persona, pastor_feedback_store=None):
         positive = fetch_recent_positive_feedback(pastor_feedback_store)
         if positive:
             ctx['recent_positive_feedback'] = positive
+        if session_decision_store is not None:
+            target = session_decision_store.get_decision(session_id, 'target_length_min')
+            if target:
+                ctx['target_length_committed'] = target
         return ctx
     return {}

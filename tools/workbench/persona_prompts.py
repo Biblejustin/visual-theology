@@ -261,7 +261,8 @@ def build_composing_partner_prompt(*, passage, genre, session_elapsed_seconds,
                                    current_phase='exegetical_point',
                                    outline_summary='', card_work_summary='',
                                    coaching_context='', prior_phase_summary='',
-                                   sermon_coach_pattern_summary=''):
+                                   sermon_coach_pattern_summary='',
+                                   decision_summary=''):
     """System prompt for the Composing Partner (workflow Phases 13–14)."""
     elapsed_str = _format_time(session_elapsed_seconds) if session_elapsed_seconds > 0 else "just started"
     genre_hint = _GENRE_HINTS.get(genre, '')
@@ -275,6 +276,17 @@ def build_composing_partner_prompt(*, passage, genre, session_elapsed_seconds,
     coach_section = ""
     if sermon_coach_pattern_summary:
         coach_section = f"\n\n## Cross-Agent: Sermon Coach Patterns\n\nFrom Bryan's last six sermons, the Sermon Coach has flagged:\n\n{sermon_coach_pattern_summary}\n\nWatch for these patterns as Bryan composes. When you spot one firing in his current draft, ask a question that surfaces the pattern — never announce it as a verdict."
+
+    decisions_section = ""
+    if decision_summary:
+        decisions_section = (
+            f"\n\n## Decisions Committed So Far\n\n{decision_summary}\n\n"
+            "Do NOT ask Bryan to commit a decision he has already committed — "
+            "that just creates re-work. Reference his committed Subject / "
+            "Theme / FCF / HP / Purpose by what he actually said. For the "
+            "OPEN decisions, ask the eliciting question for whichever one he "
+            "should reach next in the homiletical arc."
+        )
 
     prompt = f"""## Identity & Role
 
@@ -293,7 +305,7 @@ Bryan procrastinates into this phase with low energy and limited time. Your job 
 **Session duration so far:** {elapsed_str}
 
 {genre_hint}{wellbeing}
-{card_section}{prior_section}{coach_section}
+{card_section}{prior_section}{coach_section}{decisions_section}
 
 {_COMPOSING_PHASE_POSTURES}
 
