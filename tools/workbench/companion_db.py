@@ -322,6 +322,57 @@ class CompanionDB:
         if 'series_title' not in existing_session_cols:
             conn.execute("ALTER TABLE sessions ADD COLUMN series_title TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)")
+        # Homiletics engine: insight storage + claim embeddings + outline tag cache
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS homiletics_insights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK (kind IN (
+                    'illustration', 'objection', 'counseling', 'wisdom',
+                    'christ_thread', 'balance_flag', 'coherence_flag'
+                )),
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                citations TEXT NOT NULL,
+                confidence REAL NOT NULL CHECK (confidence >= 0.0 AND confidence <= 1.0),
+                metadata TEXT,
+                created_at TEXT NOT NULL,
+                consumed_at TEXT,
+                source_tool TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_insights_session_kind
+                ON homiletics_insights(session_id, kind);
+            CREATE INDEX IF NOT EXISTS idx_insights_session_created
+                ON homiletics_insights(session_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS claim_embeddings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_kind TEXT NOT NULL,
+                source_id INTEGER NOT NULL,
+                claim_text TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                embedding_model TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(source_kind, source_id, embedding_model)
+            );
+            CREATE INDEX IF NOT EXISTS idx_claim_emb_source
+                ON claim_embeddings(source_kind, source_id);
+        """)
+        existing_outline_cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(outline_nodes)").fetchall()}
+        if 'homiletical_type' not in existing_outline_cols:
+            conn.execute(
+                "ALTER TABLE outline_nodes ADD COLUMN homiletical_type TEXT "
+                "CHECK (homiletical_type IS NULL OR homiletical_type IN ("
+                "  'exegetical_claim', 'application', 'illustration', 'christ_thread',"
+                "  'question', 'transition', 'other'))"
+            )
+        if 'homiletical_type_at' not in existing_outline_cols:
+            conn.execute("ALTER TABLE outline_nodes ADD COLUMN homiletical_type_at TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_outline_nodes_session_type "
+            "ON outline_nodes(session_id, homiletical_type)"
+        )
         existing_sermon_cols = {r[1] for r in conn.execute("PRAGMA table_info(sermons)").fetchall()}
         if 'transcript_segments' not in existing_sermon_cols:
             conn.execute("ALTER TABLE sermons ADD COLUMN transcript_segments TEXT")
