@@ -678,3 +678,101 @@ class BalanceGauger:
         from llm_client import AnthropicClient
         from app_secrets import anthropic_api_key
         return AnthropicClient(api_key=anthropic_api_key())
+
+
+class CoherenceChecker:
+    """Find prior outline claims similar to a new claim, via embeddings."""
+
+    name = 'check_sermon_coherence'
+    SOURCE_KIND = 'outline_node'
+
+    def __init__(self, embeddings=None, similarity_threshold: float = 0.75,
+                 top_k: int = 3, model_name: str = None):
+        self._emb = embeddings
+        self._threshold = similarity_threshold
+        self._top_k = top_k
+        self._model_name_override = model_name
+
+    def run(self, db, *, session_id: int, claim: str) -> list:
+        if not claim or not claim.strip():
+            return []
+        emb = self._emb or self._default_embeddings()
+        model_name = self._model_name_override or self._infer_model_name(emb)
+
+        # Embed the incoming claim once.
+        query_vec = emb.embed_one(claim)
+
+        # Find all candidate outline_nodes from OTHER sessions.
+        candidates = self._load_candidate_nodes(db, exclude_session_id=session_id)
+        if not candidates:
+            return []
+
+        # Embed any candidates we haven't embedded yet (lazy backfill).
+        cached = {r['source_id']: r['vector'] for r in db.get_claim_embeddings(
+            source_kind=self.SOURCE_KIND, model=model_name,
+            source_ids=[c['id'] for c in candidates],
+        )}
+        to_embed = [c for c in candidates if c['id'] not in cached]
+        if to_embed:
+            vecs = emb.embed([c['content'] for c in to_embed])
+            for cand, vec in zip(to_embed, vecs):
+                db.save_claim_embedding(
+                    source_kind=self.SOURCE_KIND, source_id=cand['id'],
+                    claim_text=cand['content'], vector=vec, model=model_name,
+                )
+                cached[cand['id']] = vec
+
+        scored = []
+        for c in candidates:
+            v = cached.get(c['id'])
+            if not v:
+                continue
+            sim = self._cosine(query_vec, v)
+            if sim >= self._threshold:
+                scored.append((sim, c))
+        scored.sort(key=lambda sc: -sc[0])
+
+        results = []
+        for sim, c in scored[:self._top_k]:
+            insight = Insight(
+                kind='coherence_flag',
+                title=f"Similar prior claim (sim {sim:.2f})",
+                body=f"**This session's claim:** {claim}\n\n**Prior:** {c['content']}",
+                citations=[f"session:{c['session_id']}", f"outline_node:{c['id']}"],
+                confidence=float(sim),
+                metadata={
+                    'similarity': round(float(sim), 4),
+                    'prior_session_id': c['session_id'],
+                    'prior_node_id': c['id'],
+                },
+            )
+            persist(db, insight, session_id=session_id, source_tool=self.name)
+            results.append(insight)
+        return results
+
+    def _load_candidate_nodes(self, db, exclude_session_id: int) -> list:
+        conn = db._conn()
+        try:
+            return [dict(r) for r in conn.execute(
+                "SELECT id, session_id, content FROM outline_nodes "
+                "WHERE session_id != ? AND content IS NOT NULL AND length(content) > 0",
+                (exclude_session_id,)).fetchall()]
+        finally:
+            conn.close()
+
+    def _cosine(self, a: list, b: list) -> float:
+        import math
+        if len(a) != len(b):
+            return 0.0
+        dot = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a)) or 1.0
+        nb = math.sqrt(sum(x * x for x in b)) or 1.0
+        return dot / (na * nb)
+
+    def _default_embeddings(self):
+        from embeddings_client import LocalEmbeddingsClient
+        return LocalEmbeddingsClient()
+
+    def _infer_model_name(self, emb) -> str:
+        # LocalEmbeddingsClient exposes _model_name; CannedEmbeddingsClient has none.
+        return getattr(emb, '_model_name', 'canned-test')
