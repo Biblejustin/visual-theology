@@ -1043,6 +1043,33 @@ def study_index():
     return render_template("study_start.html", sessions=sessions, error=error)
 
 
+@app.route("/study/patterns")
+def study_patterns():
+    """EF-prosthesis pattern review panel — cutoff overrides, accuser-voice
+    detection frequency, recent matched examples, session activity. Designed
+    for Bryan's weekly/monthly calibration review."""
+    from patterns_report import (
+        cutoff_summary, cutoff_recent_dismissed_rate,
+        accuser_category_summary, accuser_recent_examples,
+        recent_session_activity,
+    )
+    days = int(request.args.get('days', 30))
+    cutoffs = cutoff_summary(study_analytics, days=days) if study_analytics else []
+    dismiss_rate = cutoff_recent_dismissed_rate(study_analytics, days=days) if study_analytics else 0.0
+    accuser_cats = accuser_category_summary(accuser_detector, days=days) if accuser_detector else []
+    accuser_recent = accuser_recent_examples(accuser_detector, limit=10) if accuser_detector else []
+    session_stats = recent_session_activity(companion_db, days=days) if companion_db else {'active_sessions': 0}
+    return render_template(
+        "study_patterns.html",
+        days=days,
+        cutoffs=cutoffs,
+        dismiss_rate=dismiss_rate,
+        accuser_cats=accuser_cats,
+        accuser_recent=accuser_recent,
+        session_stats=session_stats,
+    )
+
+
 @app.route("/study/session/<int:session_id>/delete", methods=["POST"])
 def study_delete_session(session_id):
     """Delete a study session and all its data."""
