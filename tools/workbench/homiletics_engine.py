@@ -517,3 +517,164 @@ class CounselingApplications:
         from llm_client import AnthropicClient
         from app_secrets import anthropic_api_key
         return AnthropicClient(api_key=anthropic_api_key())
+
+
+_HOMILETICAL_TAGS = (
+    'exegetical_claim', 'application', 'illustration', 'christ_thread',
+    'question', 'transition', 'other',
+)
+
+_BALANCE_TAG_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'tags': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'node_id': {'type': 'integer'},
+                    'homiletical_type': {'type': 'string', 'enum': list(_HOMILETICAL_TAGS)},
+                },
+                'required': ['node_id', 'homiletical_type'],
+            },
+        },
+    },
+    'required': ['tags'],
+}
+
+_BALANCE_TAG_SYSTEM = (
+    "Classify each outline node as one of: exegetical_claim (an exposition / "
+    "textual observation), application (so-what for the listener), illustration "
+    "(a story, image, anecdote), christ_thread (a Christ-centered angle), "
+    "question (rhetorical or pastoral), transition (connective tissue), other. "
+    "Use your best single label."
+)
+
+
+class BalanceGauger:
+    """Tag outline nodes and report exegesis-vs-rest balance."""
+
+    name = 'gauge_outline_balance'
+
+    def __init__(self, llm=None):
+        self._llm = llm
+
+    def run(self, db, *, session_id: int) -> list:
+        nodes = self._load_nodes(db, session_id)
+        if not nodes:
+            return []
+        stale = [n for n in nodes if self._is_stale(n)]
+        if stale:
+            self._retag(db, stale)
+            nodes = self._load_nodes(db, session_id)
+        counts = self._counts(nodes)
+        total = sum(counts.values()) or 1
+        ratio_exegetical = counts.get('exegetical_claim', 0) / total
+        summary = Insight(
+            kind='balance_flag',
+            title=f"Outline balance: {int(ratio_exegetical * 100)}% exegetical",
+            body=self._summary_body(counts, total),
+            citations=[],
+            confidence=1.0,
+            metadata={
+                'summary': True,
+                'ratio_exegetical': round(ratio_exegetical, 3),
+                'total_nodes': total,
+                'tag_counts': counts,
+            },
+        )
+        persist(db, summary, session_id=session_id, source_tool=self.name)
+        flags = [summary]
+        if ratio_exegetical >= 0.9 and total >= 3:
+            flag = Insight(
+                kind='balance_flag',
+                title='Outline is almost entirely exegetical',
+                body=(f"{counts.get('exegetical_claim', 0)} of {total} nodes are "
+                      f"exegetical. Consider adding application, illustration, or "
+                      f"a Christ-thread."),
+                citations=[],
+                confidence=0.95,
+                metadata={'flag': 'all_exegetical',
+                          'ratio_exegetical': round(ratio_exegetical, 3)},
+            )
+            persist(db, flag, session_id=session_id, source_tool=self.name)
+            flags.append(flag)
+        elif ratio_exegetical <= 0.1 and total >= 3 and counts.get('application', 0) >= 1:
+            flag = Insight(
+                kind='balance_flag',
+                title='Outline has little exegetical grounding',
+                body=('Application without rooting in the text can drift. '
+                      'Consider adding exegetical anchors per section.'),
+                citations=[],
+                confidence=0.85,
+                metadata={'flag': 'thin_exegesis',
+                          'ratio_exegetical': round(ratio_exegetical, 3)},
+            )
+            persist(db, flag, session_id=session_id, source_tool=self.name)
+            flags.append(flag)
+        return flags
+
+    def _load_nodes(self, db, session_id: int) -> list:
+        conn = db._conn()
+        try:
+            return [dict(r) for r in conn.execute(
+                "SELECT id, content, type, updated_at, homiletical_type, "
+                "homiletical_type_at FROM outline_nodes WHERE session_id = ?",
+                (session_id,)).fetchall()]
+        finally:
+            conn.close()
+
+    def _is_stale(self, node: dict) -> bool:
+        if not node.get('homiletical_type'):
+            return True
+        tag_at = node.get('homiletical_type_at')
+        if not tag_at:
+            return True
+        return node.get('updated_at') and node['updated_at'] > tag_at
+
+    def _retag(self, db, nodes: list):
+        llm = self._llm or self._default_llm()
+        prompt_lines = ['Outline nodes to classify:', '']
+        for i, n in enumerate(nodes):
+            prompt_lines.append(f"Node {i} [{n['id']}]: {n['content']}")
+        prompt = "\n".join(prompt_lines)
+        result = llm.call(
+            prompt=prompt, schema=_BALANCE_TAG_SCHEMA, system=_BALANCE_TAG_SYSTEM,
+            tool_name='emit_node_tags',
+            tool_description='Classify outline nodes by homiletical type.',
+        )
+        if 'error' in result or 'output' not in result:
+            return
+        tags = result['output'].get('tags') or []
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        conn = db._conn()
+        try:
+            for t in tags:
+                conn.execute(
+                    "UPDATE outline_nodes SET homiletical_type = ?, "
+                    "homiletical_type_at = ? WHERE id = ?",
+                    (t['homiletical_type'], now, t['node_id']),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _counts(self, nodes: list) -> dict:
+        counts = {tag: 0 for tag in _HOMILETICAL_TAGS}
+        for n in nodes:
+            t = n.get('homiletical_type') or 'other'
+            counts[t] = counts.get(t, 0) + 1
+        return {k: v for k, v in counts.items() if v > 0}
+
+    def _summary_body(self, counts: dict, total: int) -> str:
+        lines = [f"Total nodes: {total}"]
+        for tag, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+            pct = int(100 * n / total)
+            lines.append(f"  {tag}: {n} ({pct}%)")
+        return "\n".join(lines)
+
+    def _default_llm(self):
+        from llm_client import AnthropicClient
+        from app_secrets import anthropic_api_key
+        return AnthropicClient(api_key=anthropic_api_key())
