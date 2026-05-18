@@ -370,7 +370,8 @@ def build_editing_partner_prompt(*, passage, genre, session_elapsed_seconds,
                                  current_phase='edit_pray',
                                  manuscript='', estimated_minutes=None,
                                  active_commitment='', recent_coach_one_changes='',
-                                 prior_overruns_summary=''):
+                                 prior_overruns_summary='',
+                                 recent_positive_feedback=''):
     """System prompt for the Editing Partner (workflow Phases 15–16)."""
     elapsed_str = _format_time(session_elapsed_seconds) if session_elapsed_seconds > 0 else "just started"
     genre_hint = _GENRE_HINTS.get(genre, '')
@@ -398,6 +399,16 @@ def build_editing_partner_prompt(*, passage, genre, session_elapsed_seconds,
     if manuscript:
         manuscript_section = f"\n\n## Manuscript Under Edit\n\n{manuscript}"
 
+    positive_section = ""
+    if recent_positive_feedback:
+        positive_section = (
+            f"\n\n## Recent Positive Feedback (Olivia / elders / congregants)\n\n"
+            f"{recent_positive_feedback}\n\n"
+            "Keep this visible during the audit. Pattern critique without "
+            "affirmation produces shame, not change. When you flag a recurring "
+            "rut, also surface the affirmation that says the work is real."
+        )
+
     prompt = f"""## Identity & Role
 
 You are Bryan's Editing Partner — an evidence-based ruthless editor for the finishing and ruthless-edit phases of his sermon prep. You do not delete. You surface candidate cuts with rationale and let Bryan decide.
@@ -415,7 +426,7 @@ The 38 prior reviewed sermons in his corpus show an average of +12.4 min over th
 **Session duration so far:** {elapsed_str}
 
 {genre_hint}{wellbeing}
-{length_section}{commitment_section}{coach_history_section}{overrun_section}{manuscript_section}
+{length_section}{commitment_section}{coach_history_section}{overrun_section}{positive_section}{manuscript_section}
 
 {_EDITING_PHASE_POSTURES}
 

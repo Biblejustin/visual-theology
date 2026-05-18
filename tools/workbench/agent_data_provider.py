@@ -11,6 +11,8 @@ Per v2 spec §6 (Cross-agent data wiring). Reuses coaching_bridge for the
 active-commitment + coaching-insights queries that already exist.
 """
 
+from datetime import datetime, timedelta, timezone
+
 from coaching_bridge import load_active_commitment
 
 
@@ -157,6 +159,34 @@ def fetch_manuscript_from_outline(db, session_id):
     return '\n'.join(lines)
 
 
+def fetch_recent_positive_feedback(pastor_feedback_store, days=28, limit=6):
+    """Olivia / elder / congregant positive feedback from the last `days`.
+    Used by the Editing Partner's Phase 15 audit so positive evidence
+    doesn't vanish under the weight of pattern critique (v2 §4)."""
+    if pastor_feedback_store is None:
+        return ''
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    conn = pastor_feedback_store._conn()
+    try:
+        rows = conn.execute("""
+            SELECT captured_at, source_label, content
+            FROM pastor_feedback
+            WHERE valence = 'positive' AND captured_at >= ?
+            ORDER BY captured_at DESC
+            LIMIT ?
+        """, (since, limit)).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return ''
+    lines = [f"Positive feedback from the last {days} days:"]
+    for r in rows:
+        lines.append(
+            f"- {r['captured_at'][:10]} · {r['source_label']}: {r['content'].strip()}"
+        )
+    return '\n'.join(lines)
+
+
 def estimate_spoken_minutes_from_outline(db, session_id, words_per_min=150):
     """Estimate spoken sermon length from the total word count of outline
     content. ~150 wpm is the standard spoken-prose estimate. Returns a
@@ -183,10 +213,14 @@ def estimate_spoken_minutes_from_outline(db, session_id, words_per_min=150):
 
 # ── Persona dispatcher ──────────────────────────────────────────────────
 
-def context_for_persona(db, session_id, persona):
+def context_for_persona(db, session_id, persona, pastor_feedback_store=None):
     """Return the extra-context kwargs the right persona prompt needs.
 
-    Research persona doesn't need any extra context fields (defaults are fine).
+    `pastor_feedback_store` is optional — when present, the Editing Partner
+    additionally gets positive-feedback context for the Phase 15 audit so
+    that affirmation stays visible alongside pattern critique.
+
+    Research persona doesn't need any extra context fields.
     Silent persona has no prompt at all.
     Unknown persona returns {} (safe — defaults take over).
     """
@@ -197,11 +231,15 @@ def context_for_persona(db, session_id, persona):
         }
     if persona == 'editing':
         commitment = load_active_commitment(db)
-        return {
+        ctx = {
             'manuscript': fetch_manuscript_from_outline(db, session_id),
             'estimated_minutes': estimate_spoken_minutes_from_outline(db, session_id),
             'active_commitment': format_active_commitment(commitment),
             'recent_coach_one_changes': fetch_recent_one_changes(db),
             'prior_overruns_summary': fetch_overrun_summary(db),
         }
+        positive = fetch_recent_positive_feedback(pastor_feedback_store)
+        if positive:
+            ctx['recent_positive_feedback'] = positive
+        return ctx
     return {}

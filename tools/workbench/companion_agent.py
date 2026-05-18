@@ -801,7 +801,14 @@ def stream_study_response(session_id, user_message, db, analytics=None,
     # from companion.db. Research persona uses defaults.
     from agent_data_provider import context_for_persona
     persona = persona_for_phase(session['current_phase'])
-    extra_context = context_for_persona(db, session_id, persona)
+    # pastor_feedback lives in app.py as a module global; import lazily to
+    # avoid circular import and degrade gracefully if not initialized.
+    try:
+        from app import pastor_feedback as _pf
+    except ImportError:
+        _pf = None
+    extra_context = context_for_persona(db, session_id, persona,
+                                        pastor_feedback_store=_pf)
     system_prompt = select_persona_prompt(
         persona=persona,
         passage=session['passage_ref'],
