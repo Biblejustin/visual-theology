@@ -647,28 +647,37 @@ Target 25-30 minutes. If the outline grows beyond 3 main points, push back. Brya
     if outline_summary:
         prompt += f"\n\n## Current Outline\n\n{outline_summary}"
 
-    prompt += """
-
-# Homiletics tools (Phase 1)
-
-Seven new tools assist with the homiletical bridge. Call them when the
-moment is right — not on every turn:
-
-- `find_illustration(theme)` — when an outline point lacks a story or vivid image.
-- `find_objections(claim)` — when a claim is bold or counter-intuitive; surface
-  what a thoughtful objector would say.
-- `find_counseling_applications` — early in homiletics planning, to anchor the
-  sermon in real pastoral situations.
-- `find_wisdom_principles` — when distilling preachable take-home sentences.
-- `suggest_christ_thread(point?)` — when you finish a point and want to test
-  whether you can get to Christ from here.
-- `gauge_outline_balance` — at end-of-prep check, to see exegesis-vs-application ratio.
-- `check_sermon_coherence(claim)` — when a claim feels like you've made it before.
-
-These tools persist their results to the homiletics_insights table for later
-use by the pre-flight review and post-preach learning phases (not in Phase 1).
-"""
     return prompt
+
+
+# ── Study TA tool filtering (Cycle 3a misplacement fix) ─────────────────
+#
+# The Study TA is a research grad assistant + interlocutor + manuscript
+# reviewer. It is NOT a content vendor. The 5 generators below shipped
+# inside the Study TA's tool list in HE-13 and produced the "pushing too
+# fast" failure mode Bryan flagged. They are filtered out here. The 2
+# diagnostics (gauge_outline_balance + check_sermon_coherence) stay —
+# they produce questions and reviews of Bryan's existing work, not
+# content for Bryan to consume.
+#
+# Per v2 spec §14 items 4-6 + memory [[homiletics-engine-phase1-misplacement]].
+STUDY_TA_RETIRED_TOOLS = frozenset({
+    'find_illustration',
+    'find_objections',
+    'find_counseling_applications',
+    'find_wisdom_principles',
+    'suggest_christ_thread',
+})
+
+
+def study_ta_tool_defs():
+    """Tool definitions for the Study TA — TOOL_DEFINITIONS minus the
+    5 retired generators. Returns the standard Anthropic API shape."""
+    return [
+        {'name': t['name'], 'description': t['description'], 'input_schema': t['input_schema']}
+        for t in TOOL_DEFINITIONS
+        if t['name'] not in STUDY_TA_RETIRED_TOOLS
+    ]
 
 
 def stream_study_response(session_id, user_message, db, analytics=None,
@@ -771,8 +780,7 @@ def stream_study_response(session_id, user_message, db, analytics=None,
         'db': db,
     }
 
-    tool_defs = [{'name': t['name'], 'description': t['description'], 'input_schema': t['input_schema']}
-                 for t in TOOL_DEFINITIONS]
+    tool_defs = study_ta_tool_defs()
 
     # Streaming loop with tool use
     full_response_text = ''
