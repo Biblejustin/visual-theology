@@ -795,8 +795,13 @@ def stream_study_response(session_id, user_message, db, analytics=None,
     insights = load_coaching_insights(db)
     coaching_context = build_coaching_prompt_section(commitment, insights)
 
-    # Build system prompt via the phase-cluster router (Task 5 of three-persona plan)
+    # Build system prompt via the phase-cluster router. Cross-agent data layer
+    # (agent_data_provider) populates the composing/editing-specific context
+    # fields (rut history, manuscript, length estimate, active commitment, etc.)
+    # from companion.db. Research persona uses defaults.
+    from agent_data_provider import context_for_persona
     persona = persona_for_phase(session['current_phase'])
+    extra_context = context_for_persona(db, session_id, persona)
     system_prompt = select_persona_prompt(
         persona=persona,
         passage=session['passage_ref'],
@@ -806,7 +811,7 @@ def stream_study_response(session_id, user_message, db, analytics=None,
         outline_summary=outline_summary,
         card_work_summary=card_work_summary,
         coaching_context=coaching_context,
-        # Data-layer fields land in a separate plan; defaults preserved meanwhile.
+        **extra_context,
     )
     if system_prompt is None:
         # Silent persona — forward-compat guard. Today /study/'s catch-all
