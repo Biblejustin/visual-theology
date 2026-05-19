@@ -30,6 +30,12 @@ BUDGET_OK   = 'ok'       # under 80% of budget (or no budget defined)
 BUDGET_WARN = 'warn'     # 80% – 100% of budget
 BUDGET_OVER = 'over'     # past budget
 
+# Total sermon-prep budget = sum of every phase's individual budget. The 16-phase
+# workflow targets roughly 13.5 hours per sermon. This is the second-scale
+# countdown ring (after the per-phase ring) so Bryan can see both 'time left
+# in THIS phase' and 'time left in THIS sermon' at the same glance.
+SERMON_BUDGET_SEC = sum(PHASE_TIMERS.values())
+
 
 def _now():
     return datetime.now(timezone.utc)
@@ -91,6 +97,37 @@ def _next_action(phase, budget_state, total_elapsed_sec):
     return ""  # nothing pressing — render empty
 
 
+def _accumulate_sermon_elapsed(companion_db, session):
+    """Sum total_elapsed_seconds across this session AND any series siblings.
+
+    For a standalone session this is just its own elapsed. For a series child
+    (parent_session_id set) it sums parent + every child so the sermon-scale
+    ring reflects work across the whole prep arc, not just this one session.
+    """
+    total = int(session.get('total_elapsed_seconds') or 0)
+    parent_id = session.get('parent_session_id')
+    # Walk the series — pick whichever node we have, then read its children.
+    if parent_id:
+        try:
+            parent = companion_db.get_parent(session['id'])
+            if parent:
+                total = int(parent.get('total_elapsed_seconds') or 0)
+                for child in companion_db.get_children(parent['id']):
+                    if child['id'] != session['id']:
+                        total += int(child.get('total_elapsed_seconds') or 0)
+                # Add this session's elapsed too (skipped above)
+                total += int(session.get('total_elapsed_seconds') or 0)
+        except Exception:
+            pass
+    else:
+        try:
+            for child in companion_db.get_children(session['id']):
+                total += int(child.get('total_elapsed_seconds') or 0)
+        except Exception:
+            pass
+    return total
+
+
 def assess_session(companion_db, study_analytics, session_id):
     """Return a status dict the time-coach UI can render.
 
@@ -106,13 +143,24 @@ def assess_session(companion_db, study_analytics, session_id):
     time_in_phase = _seconds_in_current_phase(study_analytics, session_id, phase)
     state = _budget_state(time_in_phase, budget)
     total_elapsed = int(session.get('total_elapsed_seconds') or 0)
+    sermon_elapsed = _accumulate_sermon_elapsed(companion_db, session)
+    sermon_remaining = max(0, SERMON_BUDGET_SEC - sermon_elapsed)
+    sermon_state = _budget_state(sermon_elapsed, SERMON_BUDGET_SEC)
+    phase_remaining = None
+    if budget is not None:
+        phase_remaining = max(0, budget - time_in_phase)
     return {
         'current_phase': phase,
         'session_created_at': session.get('created_at'),
         'time_in_phase_sec': time_in_phase,
         'phase_budget_sec': budget,
+        'phase_remaining_sec': phase_remaining,
         'budget_state': state,
         'total_elapsed_sec': total_elapsed,
+        'sermon_elapsed_sec': sermon_elapsed,
+        'sermon_budget_sec': SERMON_BUDGET_SEC,
+        'sermon_remaining_sec': sermon_remaining,
+        'sermon_budget_state': sermon_state,
         'next_action': _next_action(phase, state, total_elapsed),
     }
 

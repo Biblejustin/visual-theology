@@ -35,12 +35,53 @@ def stack():
 def test_assess_session_returns_basic_fields(stack):
     sid = stack['db'].create_session('Romans 1:18-23', 66, 1, 18, 23, 'epistle')
     out = assess_session(stack['db'], stack['sa'], sid)
-    assert 'current_phase' in out
-    assert 'session_created_at' in out
-    assert 'time_in_phase_sec' in out
-    assert 'phase_budget_sec' in out
-    assert 'budget_state' in out
-    assert 'total_elapsed_sec' in out
+    for key in ('current_phase', 'session_created_at',
+                'time_in_phase_sec', 'phase_budget_sec', 'phase_remaining_sec',
+                'budget_state', 'total_elapsed_sec',
+                'sermon_elapsed_sec', 'sermon_budget_sec',
+                'sermon_remaining_sec', 'sermon_budget_state'):
+        assert key in out, f"missing field {key!r}"
+
+
+def test_assess_session_sermon_budget_matches_phase_timer_sum(stack):
+    from companion_db import PHASE_TIMERS
+    sid = stack['db'].create_session('Romans 1:18-23', 66, 1, 18, 23, 'epistle')
+    out = assess_session(stack['db'], stack['sa'], sid)
+    assert out['sermon_budget_sec'] == sum(PHASE_TIMERS.values())
+
+
+def test_assess_session_sermon_remaining_reflects_elapsed(stack):
+    sid = stack['db'].create_session('Romans 1:18-23', 66, 1, 18, 23, 'epistle')
+    # Synthesize 3 hours of elapsed
+    conn = stack['db']._conn()
+    conn.execute("UPDATE sessions SET total_elapsed_seconds = ? WHERE id = ?",
+                 (3 * 3600, sid))
+    conn.commit()
+    conn.close()
+    out = assess_session(stack['db'], stack['sa'], sid)
+    assert out['sermon_elapsed_sec'] == 3 * 3600
+    assert out['sermon_remaining_sec'] == out['sermon_budget_sec'] - 3 * 3600
+
+
+def test_assess_session_phase_remaining_when_budget_set(stack):
+    sid = stack['db'].create_session('Romans 1:18-23', 66, 1, 18, 23, 'epistle')
+    stack['db'].update_phase(sid, 'word_study')  # 1800s budget
+    long_ago = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
+    conn = stack['sa']._conn()
+    conn.execute("INSERT INTO phase_events (session_id, phase, event_type, timestamp) "
+                 "VALUES (?, 'word_study', 'enter', ?)", (sid, long_ago))
+    conn.commit()
+    conn.close()
+    out = assess_session(stack['db'], stack['sa'], sid)
+    # ~600s elapsed of 1800s budget → ~1200s remaining
+    assert 1100 <= out['phase_remaining_sec'] <= 1300
+
+
+def test_assess_session_phase_remaining_none_when_no_budget(stack):
+    sid = stack['db'].create_session('Romans 1:18-23', 66, 1, 18, 23, 'epistle')
+    stack['db'].update_phase(sid, 'study')  # catch-all, no budget
+    out = assess_session(stack['db'], stack['sa'], sid)
+    assert out['phase_remaining_sec'] is None
 
 
 def test_assess_session_returns_none_for_missing_session(stack):

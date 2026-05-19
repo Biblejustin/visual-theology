@@ -1,54 +1,151 @@
 {% if time_coach %}
+{# ── Two-ring countdown layout. Per Time Timer / Barkley research, ADHD
+   time perception responds to a shrinking visual area, not numbers.
+   Ring 1: current phase remaining (immediate scale)
+   Ring 2: this sermon remaining (~13.5h total budget) #}
 <style>
 .time-coach-strip {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 7px 14px;
+  gap: 18px;
+  padding: 8px 14px;
   background: #1a1814;
   border-bottom: 1px solid #2d2a26;
   font-family: -apple-system, system-ui, sans-serif;
   font-size: 12px;
   color: #b8af9d;
 }
-.tc-day { color: #c9b88a; font-weight: 500; }
-.tc-divider { color: #3a3325; }
-.tc-phase {
-  display: inline-flex; align-items: center; gap: 5px;
+.tc-ring-group { display: flex; align-items: center; gap: 8px; }
+.tc-ring {
+  position: relative;
+  width: 42px; height: 42px;
+  flex-shrink: 0;
+}
+.tc-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.tc-ring .tc-ring-track {
+  fill: none; stroke: #2d2a26; stroke-width: 4;
+}
+.tc-ring .tc-ring-arc {
+  fill: none; stroke-width: 4; stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s ease, stroke 0.6s ease;
+}
+.tc-ring .tc-ring-center {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 600;
   font-variant-numeric: tabular-nums;
+  color: #e8e1d0;
+  line-height: 1;
 }
-.tc-phase .tc-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: #88b878;
+.tc-ring.ok    .tc-ring-arc { stroke: #88b878; }
+.tc-ring.warn  .tc-ring-arc { stroke: #ebd078; }
+.tc-ring.over  .tc-ring-arc { stroke: #d04848; }
+.tc-ring.none  .tc-ring-arc { stroke: #4a4538; }
+.tc-ring.over .tc-ring-center { color: #ebc9c9; }
+
+.tc-label {
+  display: flex; flex-direction: column; line-height: 1.3;
 }
-.tc-phase.warn .tc-dot { background: #ebd078; }
-.tc-phase.over .tc-dot { background: #d04848; }
-.tc-phase.over { color: #ebc9c9; }
+.tc-label .tc-label-top { color: #c9b88a; font-size: 11px; font-weight: 500; }
+.tc-label .tc-label-bot { color: #8a8275; font-size: 10px; }
+
+.tc-meta {
+  flex: 1; display: flex; flex-direction: column; align-items: flex-end;
+  font-size: 11px; line-height: 1.4; gap: 2px;
+}
+.tc-meta-row { color: #8a8275; }
+.tc-meta-row .day { color: #c9b88a; font-weight: 500; }
 .tc-next {
-  flex: 1; text-align: right; color: #c9b88a; font-style: italic;
+  color: #c9b88a; font-style: italic;
+  max-width: 320px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
 body.body-doubling .time-coach-strip { opacity: 0.55; }
 </style>
+
+{# Jinja math for the SVG arcs.
+   radius r=18, circumference ≈ 113.10.
+   stroke-dashoffset = c × (1 - remaining/total)  → arc shrinks as time burns. #}
+{% set r = 18 %}
+{% set c = 113.10 %}
+
+{# ── Ring 1: current phase ─────────────────────────────────────────── #}
+{% set phase_budget = time_coach.phase_budget_sec %}
+{% set phase_remaining = time_coach.phase_remaining_sec %}
+{% if phase_budget and phase_remaining is not none %}
+  {% set phase_ratio = phase_remaining / phase_budget %}
+  {% if phase_ratio < 0 %}{% set phase_ratio = 0 %}{% endif %}
+  {% set phase_state = time_coach.budget_state %}
+  {% set phase_offset = c * (1 - phase_ratio) %}
+  {% set phase_text_min = (phase_remaining / 60)|round(0, 'floor')|int %}
+  {% set phase_display = (phase_text_min ~ 'm') if phase_text_min < 60 else ((phase_text_min // 60) ~ 'h' ~ (phase_text_min % 60) ~ 'm') %}
+{% else %}
+  {% set phase_state = 'none' %}
+  {% set phase_offset = c %}
+  {% set phase_display = '—' %}
+{% endif %}
+
+{# ── Ring 2: this sermon ──────────────────────────────────────────── #}
+{% set sermon_budget = time_coach.sermon_budget_sec %}
+{% set sermon_remaining = time_coach.sermon_remaining_sec %}
+{% set sermon_ratio = sermon_remaining / sermon_budget %}
+{% if sermon_ratio < 0 %}{% set sermon_ratio = 0 %}{% endif %}
+{% set sermon_state = time_coach.sermon_budget_state %}
+{% set sermon_offset = c * (1 - sermon_ratio) %}
+{% set sermon_text_min = (sermon_remaining / 60)|round(0, 'floor')|int %}
+{% if sermon_text_min >= 60 %}
+  {% set sermon_hours = sermon_text_min // 60 %}
+  {% set sermon_mins = sermon_text_min % 60 %}
+  {% set sermon_display = sermon_hours ~ 'h' ~ (' ' ~ sermon_mins ~ 'm' if sermon_mins else '') %}
+{% else %}
+  {% set sermon_display = sermon_text_min ~ 'm' %}
+{% endif %}
+
 <div class="time-coach-strip" role="status">
-  <span class="tc-day">{{ time_coach_week.day_name }}</span>
-  <span class="tc-divider">·</span>
-  <span>{{ time_coach_week.sessions_this_week }} session{{ '' if time_coach_week.sessions_this_week == 1 else 's' }} this week</span>
-  <span class="tc-divider">·</span>
-  <span class="tc-phase {{ time_coach.budget_state if time_coach.budget_state != 'ok' else '' }}">
-    <span class="tc-dot"></span>
-    <span>{{ time_coach.current_phase }}</span>
-    {% if time_coach.phase_budget_sec %}
-    <span>
-      {{ (time_coach.time_in_phase_sec / 60)|int }}m
-      / {{ (time_coach.phase_budget_sec / 60)|int }}m budget
-    </span>
-    {% else %}
-    <span>{{ (time_coach.time_in_phase_sec / 60)|int }}m in phase</span>
+
+  <div class="tc-ring-group" title="Time left in current phase">
+    <div class="tc-ring {{ phase_state }}">
+      <svg viewBox="0 0 42 42">
+        <circle class="tc-ring-track" cx="21" cy="21" r="{{ r }}"/>
+        <circle class="tc-ring-arc"
+                cx="21" cy="21" r="{{ r }}"
+                stroke-dasharray="{{ '%.2f'|format(c) }}"
+                stroke-dashoffset="{{ '%.2f'|format(phase_offset) }}"/>
+      </svg>
+      <div class="tc-ring-center">{{ phase_display }}</div>
+    </div>
+    <div class="tc-label">
+      <span class="tc-label-top">{{ time_coach.current_phase }}</span>
+      <span class="tc-label-bot">phase budget</span>
+    </div>
+  </div>
+
+  <div class="tc-ring-group" title="Time left in this sermon (sum of all phase budgets ≈ 13.5h)">
+    <div class="tc-ring {{ sermon_state }}">
+      <svg viewBox="0 0 42 42">
+        <circle class="tc-ring-track" cx="21" cy="21" r="{{ r }}"/>
+        <circle class="tc-ring-arc"
+                cx="21" cy="21" r="{{ r }}"
+                stroke-dasharray="{{ '%.2f'|format(c) }}"
+                stroke-dashoffset="{{ '%.2f'|format(sermon_offset) }}"/>
+      </svg>
+      <div class="tc-ring-center">{{ sermon_display }}</div>
+    </div>
+    <div class="tc-label">
+      <span class="tc-label-top">this sermon</span>
+      <span class="tc-label-bot">~13.5h target</span>
+    </div>
+  </div>
+
+  <div class="tc-meta">
+    <div class="tc-meta-row">
+      <span class="day">{{ time_coach_week.day_name }}</span> ·
+      {{ time_coach_week.sessions_this_week }} session{{ '' if time_coach_week.sessions_this_week == 1 else 's' }} this week
+    </div>
+    {% if time_coach.next_action %}
+    <div class="tc-next">{{ time_coach.next_action }}</div>
     {% endif %}
-  </span>
-  {% if time_coach.next_action %}
-  <span class="tc-next">{{ time_coach.next_action }}</span>
-  {% endif %}
+  </div>
 </div>
 {% endif %}
