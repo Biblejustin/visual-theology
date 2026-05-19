@@ -194,3 +194,64 @@ def week_context(companion_db, study_analytics):
         'day_name': day_name,
         'sessions_this_week': int(row['n'] if row else 0),
     }
+
+
+def prep_window_position():
+    """Compute Bryan's position in the sermon-prep window (Tue 00:00 → Fri 15:00).
+
+    Returns a dict the horizon-bar partial can render:
+      - state: 'in_window' | 'before_window' | 'lockout' | 'preach_day' | 'day_off'
+      - fraction: 0.0–1.0 progress through the window (None outside it)
+      - color: 'green' | 'amber' | 'red' | 'lockout' | 'muted'
+      - label: short human-readable status
+
+    Window boundaries (per reference_bryan_work_week):
+      - Tue 00:00 local = prep window opens
+      - Fri 15:00 local = hard cutoff (sermon prep window closes)
+      - Sat all day + Sun before 6:30am = weekend lockout
+      - Sun 6:30am+ = preach day (preaching + pastoral, not sermon prep)
+      - Mon = day off
+    """
+    from datetime import timedelta
+    now = _now().astimezone()
+    wd = now.weekday()  # Mon=0 .. Tue=1 .. Sun=6
+    if wd == 0:  # Monday
+        return {'state': 'day_off', 'fraction': None, 'color': 'muted',
+                'label': "Monday — day off"}
+    if wd == 6:  # Sunday
+        if now.hour >= 6 and (now.hour > 6 or now.minute >= 30):
+            return {'state': 'preach_day', 'fraction': None, 'color': 'muted',
+                    'label': "Sunday — preach day"}
+        return {'state': 'lockout', 'fraction': None, 'color': 'lockout',
+                'label': "Weekend lockout"}
+    if wd == 5:  # Saturday
+        return {'state': 'lockout', 'fraction': None, 'color': 'lockout',
+                'label': "Weekend lockout"}
+    # Tue (1) – Fri (4): inside the prep window (or past Fri 3pm)
+    # Anchor Tuesday 00:00 local
+    tue_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=(wd - 1))
+    fri_cutoff = tue_start + timedelta(days=3, hours=15)  # Tue + 3d = Fri; +15h = 15:00
+    window_total = (fri_cutoff - tue_start).total_seconds()
+    elapsed = (now - tue_start).total_seconds()
+    if now >= fri_cutoff:  # Fri after 3pm — past hard cutoff but still Friday
+        return {'state': 'lockout', 'fraction': 1.0, 'color': 'lockout',
+                'label': "Past Friday 3pm — prep window closed"}
+    fraction = max(0.0, min(1.0, elapsed / window_total))
+    if fraction >= 0.90:
+        color = 'red'
+    elif fraction >= 0.60:
+        color = 'amber'
+    else:
+        color = 'green'
+    # Friendly label includes time remaining
+    remaining = (fri_cutoff - now).total_seconds()
+    rem_hours = int(remaining // 3600)
+    rem_min = int((remaining % 3600) // 60)
+    if rem_hours >= 24:
+        rem_label = f"{rem_hours // 24}d {rem_hours % 24}h to Friday 3pm"
+    elif rem_hours >= 1:
+        rem_label = f"{rem_hours}h {rem_min}m to Friday 3pm"
+    else:
+        rem_label = f"{rem_min}m to Friday 3pm"
+    return {'state': 'in_window', 'fraction': fraction, 'color': color,
+            'label': rem_label}

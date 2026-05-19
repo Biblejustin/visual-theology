@@ -170,3 +170,20 @@ def test_week_context_day_name(stack):
 def test_week_context_empty_db(stack):
     ctx = week_context(stack['db'], stack['sa'])
     assert ctx['sessions_this_week'] == 0
+
+
+# ── prep_window_position ──────────────────────────────────────────────────
+
+def test_prep_window_position_returns_required_fields():
+    from time_coach import prep_window_position
+    out = prep_window_position()
+    for key in ('state', 'fraction', 'color', 'label'):
+        assert key in out
+    assert out['state'] in ('in_window', 'before_window', 'lockout',
+                            'preach_day', 'day_off')
+
+
+def test_prep_window_position_color_is_valid():
+    from time_coach import prep_window_position
+    out = prep_window_position()
+    assert out['color'] in ('green', 'amber', 'red', 'lockout', 'muted')
