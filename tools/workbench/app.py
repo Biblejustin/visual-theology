@@ -11,6 +11,7 @@ Run:
 import atexit
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -281,6 +282,93 @@ def _is_sermon_work_page_load(req):
     return req.path.startswith("/study/")
 
 
+# ── Cutoff enforcement (review #3) ────────────────────────────────────────
+#
+# Bryan picked enforcement for Friday 3pm + weekend lockout (matches the
+# 'no rescue modes' decision in feedback memory). Daily 5pm stays
+# advisory-only — softer family-time signal, not a hard work stop.
+#
+# Reads stay open at every cutoff so Bryan can pull the existing outline
+# and conversation into Apple Pages for delivery.
+#
+# Override: LOGOS_CUTOFF_DISABLE=1 disables enforcement entirely (for
+# tests + occasional emergencies). LOGOS_CUTOFF_ENFORCE_5PM=1 also
+# enforces the daily 5pm cutoff for users who want the stricter signal.
+
+_ENFORCED_CUTOFFS_DEFAULT = frozenset({'friday_3pm', 'weekend_lockout'})
+
+
+def _enforced_cutoff_types():
+    if os.environ.get('LOGOS_CUTOFF_ENFORCE_5PM') == '1':
+        return _ENFORCED_CUTOFFS_DEFAULT | {'daily_5pm'}
+    return _ENFORCED_CUTOFFS_DEFAULT
+
+
+def _active_enforced_cutoff():
+    """Return the currently-active cutoff type IF it is in the enforced
+    set, else None. The advisory banner uses the full set; this is the
+    narrower 'should we block writes?' check."""
+    if os.environ.get('LOGOS_CUTOFF_DISABLE') == '1':
+        return None
+    if not study_analytics:
+        return None
+    active = study_analytics.active_cutoff_type()
+    if active and active in _enforced_cutoff_types():
+        return active
+    return None
+
+
+# Paths that perform sermon WRITES or LLM calls and should be blocked
+# when an enforced cutoff is active. Reads (GET, except those listed
+# below) stay open so Bryan can read/copy his work into Apple Pages.
+_CUTOFF_BLOCKED_PATH_PREFIXES = (
+    '/api/study/session/',  # decision set/clear (writes)
+    '/study/session/new',
+)
+_CUTOFF_BLOCKED_PATH_PATTERNS = (
+    re.compile(r'^/study/session/\d+/discuss$'),
+    re.compile(r'^/study/session/\d+/card/(next|back|autosave)$'),
+    re.compile(r'^/study/session/\d+/transcribe$'),
+    re.compile(r'^/study/session/\d+/word-info$'),
+    re.compile(r'^/study/session/\d+/annotate$'),
+    re.compile(r'^/study/session/\d+/notepad$'),
+    re.compile(r'^/study/session/\d+/outline/add$'),
+    re.compile(r'^/study/session/\d+/outline/\d+$'),
+    re.compile(r'^/study/session/\d+/clock$'),
+    re.compile(r'^/study/session/\d+/split(/propose)?$'),
+    re.compile(r'^/study/session/\d+/decisions/(set|clear)$'),
+    re.compile(r'^/study/session/\d+/delete$'),
+)
+
+
+def _is_cutoff_blocked_path(req):
+    if req.method == 'GET':
+        return False
+    path = req.path
+    if any(path.startswith(p) for p in _CUTOFF_BLOCKED_PATH_PREFIXES):
+        return True
+    return any(p.match(path) for p in _CUTOFF_BLOCKED_PATH_PATTERNS)
+
+
+@app.before_request
+def _enforce_cutoff_on_writes():
+    """423 Locked on sermon-work writes when Friday 3pm or weekend lockout
+    is active. GET paths stay open so Bryan can read existing work into
+    Apple Pages."""
+    if not _is_cutoff_blocked_path(request):
+        return None
+    cutoff = _active_enforced_cutoff()
+    if not cutoff:
+        return None
+    return jsonify({
+        'error': 'cutoff_active',
+        'cutoff_type': cutoff,
+        'message': _pick_cutoff_message(cutoff) or 'Sermon work is closed for the week.',
+        'reopens_at': 'Tuesday 06:00 local' if cutoff == 'weekend_lockout'
+                       else 'Tuesday 00:00 local',
+    }), 423
+
+
 # Variable phrasings per cutoff type — rotate by day-of-year so the same
 # message doesn't fire two days running and habituate to background noise.
 # Per v2 §8.3 EF principle: predictable alarms get tuned out within 2 weeks.
@@ -348,6 +436,10 @@ def inject_cutoff_banner():
         "cutoff_event_id": event_id,
         "cutoff_event_type": cutoff_type,
         "cutoff_banner_message": _pick_cutoff_message(cutoff_type),
+        # Truthy when this cutoff blocks writes (review #3 enforcement).
+        # The template flags read-only mode visually so write controls
+        # don't look interactive when they'll get 423'd.
+        "cutoff_enforced": cutoff_type in _enforced_cutoff_types(),
     }
 
 

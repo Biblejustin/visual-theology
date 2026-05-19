@@ -11,6 +11,7 @@
   font-size: 14px;
   line-height: 1.4;
 }
+.cutoff-banner.enforced { border-bottom-color: #c43d3d; }
 .cutoff-banner-body {
   max-width: 900px;
   margin: 0 auto;
@@ -21,6 +22,18 @@
   gap: 16px;
 }
 .cutoff-banner-text { flex: 1; }
+.cutoff-banner-readonly {
+  display: inline-block;
+  background: #c43d3d;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
 .cutoff-banner-dismiss {
   background: transparent;
   color: #f4e9d4;
@@ -31,15 +44,26 @@
   font-size: 13px;
 }
 .cutoff-banner-dismiss:hover { background: #8a6e3e; }
+/* Read-only mode: dim write controls so they don't look interactive. */
+body.cutoff-enforced #study-input,
+body.cutoff-enforced #mic-button,
+body.cutoff-enforced .outline-write-control,
+body.cutoff-enforced form[action$="/card/next"],
+body.cutoff-enforced form[action$="/card/back"] {
+  opacity: 0.4;
+  pointer-events: none;
+}
 </style>
-<div id="cutoff-banner-{{ cutoff_event_id }}" class="cutoff-banner" role="status">
+<div id="cutoff-banner-{{ cutoff_event_id }}" class="cutoff-banner{% if cutoff_enforced %} enforced{% endif %}" role="status">
   <div class="cutoff-banner-body">
     <span class="cutoff-banner-text">
+      {% if cutoff_enforced %}<span class="cutoff-banner-readonly">Read-only</span>{% endif %}
       {% if cutoff_banner_message %}{{ cutoff_banner_message }}
       {% elif cutoff_event_type == 'weekend_lockout' %}It's the weekend. Sermon work waits for Tuesday.
       {% elif cutoff_event_type == 'friday_3pm' %}It's past Friday 3pm. The sermon prep window is closed.
       {% else %}It's past 5pm. Family time begins now.
       {% endif %}
+      {% if cutoff_enforced %}<br><small style="opacity:0.85">Reading + copy/paste stay open. Writes resume {% if cutoff_event_type == 'weekend_lockout' %}Tuesday 6am{% else %}Tuesday{% endif %}.</small>{% endif %}
     </span>
     <button
       class="cutoff-banner-dismiss"
@@ -50,4 +74,7 @@
     >Dismiss</button>
   </div>
 </div>
+{% if cutoff_enforced %}
+<script>document.body.classList.add('cutoff-enforced');</script>
+{% endif %}
 {% endif %}
