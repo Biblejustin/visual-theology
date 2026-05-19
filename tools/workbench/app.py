@@ -622,7 +622,12 @@ def api_library_search():
 
     query = request.args.get("q", "").strip()
     rtype = request.args.get("type", "all")
-    limit = int(request.args.get("limit", "50"))
+    # Bug review #2: int() crashed on ?limit=x. Validate + clamp.
+    try:
+        limit = int(request.args.get("limit", "50"))
+    except (TypeError, ValueError):
+        limit = 50
+    limit = max(1, min(limit, 200))
 
     if not query and rtype == "all":
         return render_template("partials/library_results.html", results=[], query="")
@@ -2100,7 +2105,14 @@ def sermon_backfill():
     from sermon_matcher import dispatch_matching
     from sermon_analyzer import dispatch_pending_analyses
     from llm_client import AnthropicClient
-    limit = int(request.args.get('limit', 24))
+    # Bug review #8: int() crashed on ?limit=x. This endpoint kicks off
+    # external API calls; clamp to a reasonable ceiling so a typo doesn't
+    # trigger 500 sermon-syncs.
+    try:
+        limit = int(request.args.get('limit', 24))
+    except (TypeError, ValueError):
+        limit = 24
+    limit = max(1, min(limit, 500))
     db = get_db()
     result = run_sync(db, client=_make_sermonaudio_client(),
                       broadcaster_id=_broadcaster_id(), trigger='backfill', limit=limit)
