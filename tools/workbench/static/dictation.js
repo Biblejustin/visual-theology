@@ -442,6 +442,15 @@
         var actions = document.createElement('div');
         actions.className = 'ds-actions';
 
+        if (owner.lastBlob && owner.lastBlob.size > 0) {
+            var playBtn = document.createElement('button');
+            playBtn.type = 'button';
+            playBtn.textContent = '▶ Play';
+            playBtn.title = 'Listen to your recording before accepting the transcript';
+            playBtn.addEventListener('click', function () { owner.playLastBlob(playBtn); });
+            actions.appendChild(playBtn);
+        }
+
         if (text) {
             var keepBtn = document.createElement('button');
             keepBtn.type = 'button';
@@ -738,6 +747,10 @@
     Dictation.prototype.finalize = function () {
         var self = this;
         var blob = new Blob(this.chunks, { type: (this.recorder && this.recorder.mimeType) || 'audio/webm' });
+        // Keep the blob so the Review view can offer Play-back before Keep
+        // (lets Bryan verify the audio against the transcript before
+        // committing the words to his textarea).
+        this.lastBlob = blob;
         this.chunks = [];
         if (!blob.size) {
             this.processing = false;
@@ -775,6 +788,45 @@
                 }, self);
                 alert('Whisper transcription failed: ' + err.message);
             });
+    };
+
+    Dictation.prototype.playLastBlob = function (btn) {
+        if (!this.lastBlob || this.lastBlob.size === 0) return;
+        // Stop any previous playback on this Dictation instance.
+        if (this._currentPlayback) {
+            try { this._currentPlayback.pause(); } catch (e) { /* ignore */ }
+            if (this._currentPlaybackUrl) {
+                URL.revokeObjectURL(this._currentPlaybackUrl);
+                this._currentPlaybackUrl = null;
+            }
+            this._currentPlayback = null;
+        }
+        var url = URL.createObjectURL(this.lastBlob);
+        var audio = new Audio(url);
+        this._currentPlayback = audio;
+        this._currentPlaybackUrl = url;
+        var self = this;
+        if (btn) { btn.textContent = '⏸ Playing'; btn.disabled = true; }
+        audio.onended = function () {
+            URL.revokeObjectURL(url);
+            self._currentPlayback = null;
+            self._currentPlaybackUrl = null;
+            if (btn) { btn.textContent = '▶ Play'; btn.disabled = false; }
+        };
+        audio.onerror = function () {
+            URL.revokeObjectURL(url);
+            self._currentPlayback = null;
+            self._currentPlaybackUrl = null;
+            if (btn) { btn.textContent = '▶ Play'; btn.disabled = false; }
+            console.warn('dictation: playback failed for blob', self.lastBlob);
+        };
+        audio.play().catch(function (err) {
+            console.warn('dictation: audio.play() rejected', err);
+            URL.revokeObjectURL(url);
+            self._currentPlayback = null;
+            self._currentPlaybackUrl = null;
+            if (btn) { btn.textContent = '▶ Play'; btn.disabled = false; }
+        });
     };
 
     Dictation.prototype._rollbackTarget = function () {
