@@ -79,7 +79,7 @@
                 <div id="conversation-thread">
                     {% for msg in messages %}
                     <div class="conv-message {{ msg.role }}">
-                        <div class="msg-content">{{ msg.content }}</div>
+                        <div class="msg-content">{{ msg.content | chat_markdown }}</div>
                     </div>
                     {% endfor %}
                 </div>
@@ -132,6 +132,7 @@
 
     {% include 'partials/series_split_modal.html' %}
 
+    <script src="/static/htmx.min.js"></script>
     <script src="/static/study.js?v=9"></script>
     <script src="/static/dictation.js?v=11"></script>
     <script>

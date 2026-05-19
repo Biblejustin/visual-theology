@@ -383,17 +383,31 @@ def build_editing_partner_prompt(*, passage, genre, session_elapsed_seconds,
                                  manuscript='', estimated_minutes=None,
                                  active_commitment='', recent_coach_one_changes='',
                                  prior_overruns_summary='',
-                                 recent_positive_feedback=''):
+                                 recent_positive_feedback='',
+                                 target_length_committed=None):
     """System prompt for the Editing Partner (workflow Phases 15–16)."""
     elapsed_str = _format_time(session_elapsed_seconds) if session_elapsed_seconds > 0 else "just started"
     genre_hint = _GENRE_HINTS.get(genre, '')
     wellbeing = _wellbeing_note(session_elapsed_seconds)
 
+    # If Bryan committed a target length for THIS session, use it; otherwise
+    # fall back to the 28-min corpus-derived default.
+    try:
+        target_min = float(target_length_committed) if target_length_committed else 28
+    except (TypeError, ValueError):
+        target_min = 28
+
     length_section = ""
     if estimated_minutes is not None:
-        delta = estimated_minutes - 28
+        delta = estimated_minutes - target_min
         color = "green" if delta <= 0 else ("yellow" if delta <= 5 else "red")
-        length_section = f"\n\n## Length Gauge (Pass 0)\n\nEstimated spoken length: **{estimated_minutes} min** vs 28-min target = **{delta:+.1f} min** ({color})."
+        target_note = (f" (Bryan's committed target this session)"
+                       if target_length_committed else " (28-min corpus default)")
+        length_section = (
+            f"\n\n## Length Gauge (Pass 0)\n\nEstimated spoken length: "
+            f"**{estimated_minutes} min** vs **{target_min:g} min** target"
+            f"{target_note} = **{delta:+.1f} min** ({color})."
+        )
 
     commitment_section = ""
     if active_commitment:

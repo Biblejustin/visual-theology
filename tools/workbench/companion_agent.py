@@ -89,13 +89,20 @@ def select_persona_prompt(*, persona, passage, genre, session_elapsed_seconds,
                           coaching_context,
                           prior_phase_summary='',
                           sermon_coach_pattern_summary='',
+                          decision_summary='',
                           manuscript='', estimated_minutes=None,
                           active_commitment='', recent_coach_one_changes='',
-                          prior_overruns_summary=''):
+                          prior_overruns_summary='',
+                          recent_positive_feedback='',
+                          target_length_committed=None):
     """Build the system prompt for the active persona. Returns None for silent.
 
     Imports are local to avoid a circular import: persona_prompts imports
     HOMILETICAL_GUARDRAILS + _format_time from companion_agent.
+
+    Every kwarg the cross-agent data layer (agent_data_provider) can
+    emit must appear here, otherwise **extra_context unpacking will
+    crash composing/editing prompt construction. See test_persona_kwarg_contract.
     """
     if persona == 'silent':
         return None
@@ -114,6 +121,7 @@ def select_persona_prompt(*, persona, passage, genre, session_elapsed_seconds,
             coaching_context=coaching_context,
             prior_phase_summary=prior_phase_summary,
             sermon_coach_pattern_summary=sermon_coach_pattern_summary,
+            decision_summary=decision_summary,
         )
     if persona == 'editing':
         return build_editing_partner_prompt(
@@ -125,6 +133,8 @@ def select_persona_prompt(*, persona, passage, genre, session_elapsed_seconds,
             active_commitment=active_commitment,
             recent_coach_one_changes=recent_coach_one_changes,
             prior_overruns_summary=prior_overruns_summary,
+            recent_positive_feedback=recent_positive_feedback,
+            target_length_committed=target_length_committed,
         )
     # default: research
     return build_research_partner_prompt(

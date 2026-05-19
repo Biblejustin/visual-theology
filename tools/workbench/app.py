@@ -171,6 +171,49 @@ def safe_assistant_filter(content):
     return escape(content)
 
 
+@app.template_filter('chat_markdown')
+def chat_markdown_filter(content):
+    """Render the subset of markdown Claude actually emits in chat:
+    **bold**, *italic*, `code`, paragraph breaks, simple bullet/numbered
+    lists. Runs AFTER escape() so injection isn't possible.
+
+    Intentionally narrow — pulling python-markdown for this would be
+    overkill and would risk rendering richer markup the chat UI doesn't
+    expect.
+    """
+    import re
+    from markupsafe import escape, Markup
+    if not content:
+        return ''
+    safe = str(escape(content))
+    # Bold + italic. Use [^*] to avoid greedy matches across newlines.
+    safe = re.sub(r'\*\*([^*\n]+?)\*\*', r'<strong>\1</strong>', safe)
+    safe = re.sub(r'(?<![\*\w])\*([^*\n]+?)\*(?!\w)', r'<em>\1</em>', safe)
+    safe = re.sub(r'`([^`\n]+?)`', r'<code>\1</code>', safe)
+    # Paragraph breaks: blank line → </p><p>. Single newlines → <br>.
+    paragraphs = re.split(r'\n\s*\n', safe)
+    rendered = []
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        # Bullet list (- or *) on consecutive lines
+        lines = para.split('\n')
+        if all(re.match(r'^\s*[-*]\s+', ln) for ln in lines):
+            stripped = [re.sub(r'^\s*[-*]\s+', '', ln) for ln in lines]
+            items = ''.join(f'<li>{ln}</li>' for ln in stripped)
+            rendered.append(f'<ul>{items}</ul>')
+            continue
+        # Numbered list
+        if all(re.match(r'^\s*\d+\.\s+', ln) for ln in lines):
+            stripped = [re.sub(r'^\s*\d+\.\s+', '', ln) for ln in lines]
+            items = ''.join(f'<li>{ln}</li>' for ln in stripped)
+            rendered.append(f'<ol>{items}</ol>')
+            continue
+        rendered.append('<p>' + para.replace('\n', '<br>') + '</p>')
+    return Markup(''.join(rendered))
+
+
 # ── Lifecycle ─────────────────────────────────────────────────────────────
 
 companion_db = None
@@ -770,10 +813,9 @@ def study_card_next(session_id):
     if phase in card_phase_keys:
         idx = card_phase_keys.index(phase)
         if idx < len(card_phase_keys) - 1:
-            next_phase = card_phase_keys[idx + 1]
-            companion_db.update_phase(session_id, next_phase)
+            _transition_phase(session_id, phase, card_phase_keys[idx + 1])
         else:
-            companion_db.update_phase(session_id, "context")
+            _transition_phase(session_id, phase, "context")
             _save_card_summary_for_ai(session_id)
     return redirect(url_for("study_session_view", session_id=session_id))
 
@@ -789,8 +831,31 @@ def study_card_back(session_id):
     if phase in card_phase_keys:
         idx = card_phase_keys.index(phase)
         if idx > 0:
-            companion_db.update_phase(session_id, card_phase_keys[idx - 1])
+            _transition_phase(session_id, phase, card_phase_keys[idx - 1])
     return redirect(url_for("study_session_view", session_id=session_id))
+
+
+def _transition_phase(session_id, old_phase, new_phase):
+    """Atomic phase swap that keeps phase_events in sync.
+
+    Previously update_phase() was called directly with no exit/enter
+    events, so the Time Coach phase-budget ring computed from
+    phase_events showed a full 45m even for long-running context
+    sessions, and 90-minute hyperfocus detection couldn't fire.
+    """
+    if new_phase == old_phase:
+        return
+    if study_analytics:
+        try:
+            study_analytics.record_phase_exit(session_id, old_phase)
+        except Exception:
+            pass
+    companion_db.update_phase(session_id, new_phase)
+    if study_analytics:
+        try:
+            study_analytics.record_phase_enter(session_id, new_phase)
+        except Exception:
+            pass
 
 
 @app.route("/study/session/<int:session_id>/study-bibles")
