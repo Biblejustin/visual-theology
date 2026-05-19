@@ -55,8 +55,11 @@ def _seconds_in_current_phase(study_analytics, session_id, phase):
 
     Reads phase_events for this session+phase, finds the latest 'enter' event,
     returns now - that timestamp in seconds. Returns 0 if there's no enter
-    event or the timestamp can't be parsed.
+    event or the timestamp can't be parsed. Returns 0 if study_analytics
+    isn't initialized (tests that don't set it up shouldn't crash).
     """
+    if study_analytics is None:
+        return 0
     conn = study_analytics._conn()
     try:
         row = conn.execute(
