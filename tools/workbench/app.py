@@ -2216,61 +2216,87 @@ def sermon_reanalyze(sermon_id):
 
 @sermons_bp.route('/<int:sermon_id>/link/<int:session_id>', methods=['POST'])
 def sermon_link(sermon_id, session_id):
+    # Bug review #9: was 500 with FK constraint error for missing rows.
     db = get_db()
     conn = db._conn()
-    conn.execute(
-        "UPDATE sermon_links SET link_status = 'rejected' WHERE sermon_id = ? AND link_status = 'active'",
-        (sermon_id,),
-    )
-    conn.execute("""
-        INSERT INTO sermon_links
-            (sermon_id, session_id, link_status, link_source, match_reason, created_at)
-        VALUES (?, ?, 'active', 'manual', 'user_linked', datetime('now'))
-    """, (sermon_id, session_id))
-    conn.execute(
-        "UPDATE sermons SET match_status = 'matched', last_match_attempt_at = datetime('now') WHERE id = ?",
-        (sermon_id,),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        sermon_row = conn.execute("SELECT id FROM sermons WHERE id = ?", (sermon_id,)).fetchone()
+        if not sermon_row:
+            return jsonify({'error': 'sermon not found'}), 404
+        session_row = conn.execute("SELECT id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        if not session_row:
+            return jsonify({'error': 'session not found'}), 404
+        conn.execute(
+            "UPDATE sermon_links SET link_status = 'rejected' WHERE sermon_id = ? AND link_status = 'active'",
+            (sermon_id,),
+        )
+        conn.execute("""
+            INSERT INTO sermon_links
+                (sermon_id, session_id, link_status, link_source, match_reason, created_at)
+            VALUES (?, ?, 'active', 'manual', 'user_linked', datetime('now'))
+        """, (sermon_id, session_id))
+        conn.execute(
+            "UPDATE sermons SET match_status = 'matched', last_match_attempt_at = datetime('now') WHERE id = ?",
+            (sermon_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
     return jsonify({'ok': True, 'link_status': 'active', 'link_source': 'manual'})
 
 
 @sermons_bp.route('/<int:sermon_id>/unlink', methods=['POST'])
 def sermon_unlink(sermon_id):
+    # Bug review #9: was silently {ok:true} on missing sermon_id.
     db = get_db()
     conn = db._conn()
-    conn.execute("""
-        UPDATE sermon_links SET link_status = 'rejected'
-        WHERE sermon_id = ? AND link_status = 'active'
-    """, (sermon_id,))
-    conn.execute(
-        "UPDATE sermons SET match_status = 'rejected_all' WHERE id = ?",
-        (sermon_id,),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        sermon_row = conn.execute("SELECT id FROM sermons WHERE id = ?", (sermon_id,)).fetchone()
+        if not sermon_row:
+            return jsonify({'error': 'sermon not found'}), 404
+        conn.execute("""
+            UPDATE sermon_links SET link_status = 'rejected'
+            WHERE sermon_id = ? AND link_status = 'active'
+        """, (sermon_id,))
+        conn.execute(
+            "UPDATE sermons SET match_status = 'rejected_all' WHERE id = ?",
+            (sermon_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
     return jsonify({'ok': True})
 
 
 @sermons_bp.route('/<int:sermon_id>/approve-candidate/<int:link_id>', methods=['POST'])
 def sermon_approve_candidate(sermon_id, link_id):
+    # Bug review #9: was silently {ok:true} when sermon or link didn't exist.
     db = get_db()
     conn = db._conn()
-    conn.execute(
-        "DELETE FROM sermon_links WHERE sermon_id = ? AND link_status = 'active'",
-        (sermon_id,),
-    )
-    conn.execute("""
-        UPDATE sermon_links SET link_status = 'active'
-        WHERE id = ? AND sermon_id = ?
-    """, (link_id, sermon_id))
-    conn.execute(
-        "UPDATE sermons SET match_status = 'matched' WHERE id = ?",
-        (sermon_id,),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        link_row = conn.execute(
+            "SELECT id FROM sermon_links WHERE id = ? AND sermon_id = ?",
+            (link_id, sermon_id),
+        ).fetchone()
+        if not link_row:
+            return jsonify({
+                'error': 'candidate link not found for this sermon'
+            }), 404
+        conn.execute(
+            "DELETE FROM sermon_links WHERE sermon_id = ? AND link_status = 'active'",
+            (sermon_id,),
+        )
+        conn.execute("""
+            UPDATE sermon_links SET link_status = 'active'
+            WHERE id = ? AND sermon_id = ?
+        """, (link_id, sermon_id))
+        conn.execute(
+            "UPDATE sermons SET match_status = 'matched' WHERE id = ?",
+            (sermon_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
     return jsonify({'ok': True})
 
 
