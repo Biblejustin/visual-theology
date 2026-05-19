@@ -105,8 +105,22 @@ def base_url():
         pass
 
 
+def _require_base_url(base_url):
+    """Helper: skip the calling test cleanly when the live dev server is
+    holding port 5111 (in which case base_url yielded None). Without this
+    skip, page.goto(f'{None}/...') produced cryptic 'Cannot navigate to
+    invalid URL: None/study/' Playwright errors. Per bug review #7."""
+    if base_url is None:
+        import pytest
+        pytest.skip(
+            "Live dev server is using port 5111 — E2E subprocess server "
+            "couldn't start. Stop the dev server to run E2E tests."
+        )
+
+
 def create_session(page, base_url, passage="Romans 1:24-32"):
     """Create a study session and return the session URL."""
+    _require_base_url(base_url)
     page.goto(f"{base_url}/study/")
     page.fill('input[name="passage"]', passage)
     page.click('button[type="submit"], .btn-primary')
@@ -123,6 +137,7 @@ def advance_to_conversation(page, base_url, passage="Romans 1:24-32"):
     - digestion (has textarea): fills text, clicks Next
     - study_bibles (no textarea): just clicks Next
     """
+    _require_base_url(base_url)
     create_session(page, base_url, passage)
 
     # Phase 1: Prayer (has textarea)
