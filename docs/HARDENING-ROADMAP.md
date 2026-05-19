@@ -109,6 +109,47 @@ module.
 (validators, db_provider, bp_passage, bp_auth, bp_workbench,
 bp_sermons, and the existing tests). 926 tests passing.
 
+## Polish #6 — Persona/agent layer dead-code purge ✓
+
+The `/companion/` deletion (polish #5a) left ~600 lines of orphan
+code in `companion_agent.py`. The v2 persona refactor had also
+introduced `select_persona_prompt` to replace `build_study_prompt`,
+but the old function stayed alive because 4 test files imported it.
+Classic feature-then-patch trail.
+
+**Deleted from `companion_agent.py`:**
+- `stream_companion_response` (165 lines) — 0 callers post-/companion/
+- `build_system_prompt` (135 lines) — only `stream_companion_response`
+- `PHASE_DESCRIPTIONS` (62 lines) — only `build_system_prompt`
+- `HOMILETICAL_GUARDRAILS_EMPHASIZED` (20 lines) — same
+- `build_study_prompt` (180 lines) — only tests; superseded by
+  `select_persona_prompt` in v2 refactor
+- `study_ta_tool_defs` + `STUDY_TA_RETIRED_TOOLS` (22 lines) —
+  duplicate of `persona_tools.tool_defs_for_persona`
+- 4 unused imports (TOOL_DEFINITIONS, IDENTITY_CORE,
+  HOMILETICAL_TRADITION, VOICE_GUARDRAILS)
+
+**Test housekeeping:**
+- `tests/test_companion_agent.py` deleted — pure dead-behavior tests
+- `tests/test_study_ta_retired_generators.py` deleted; new
+  `tests/test_persona_tool_filtering.py` preserves the SAME invariants
+  (no generators leak into any persona; diagnostics stay) against the
+  live `persona_tools.tool_defs_for_persona` API
+- `tests/test_coaching_bridge*.py` migrated off `build_study_prompt`
+  onto `build_research_partner_prompt` (what production actually uses
+  for the Research Partner persona)
+
+**Bonus — streaming abstraction unified:**
+`stream_study_response` was the only one of 4 agents not using
+`llm_client.stream_message`. It went direct to the Anthropic SDK with
+its own raw `content_block_*` event handling — 125 lines of
+duplicated SDK plumbing. Migrated to use `llm_client.AnthropicClient`
+like the coach agents. Same tool-use loop shape across all surfaces.
+
+**Net result:** `companion_agent.py` 943 → 315 lines (-67%). Tests
+920 passing (was 926; the −6 drop is the deleted pure-dead-behavior
+tests in `test_companion_agent.py`).
+
 ## Not in scope (separate threads)
 
 - Three-persona architecture refinement (Composing/Editing/Research)
