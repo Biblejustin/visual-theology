@@ -262,22 +262,19 @@ def test_get_recent_cutoff_event_returns_dismissed_state(sa):
 
 @pytest.fixture
 def client():
+    """Per bug review #7-#8: use shared init_all_app_globals so other
+    stores stay consistent and we don't leave the app module in a
+    partial state for the next test in the suite."""
     import app as app_module
+    from conftest import init_all_app_globals
 
     tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
     tmp.close()
-    cdb = CompanionDB(tmp.name)
-    cdb.init_db()
-    seed_question_bank(cdb)
-    analytics = SessionAnalytics(tmp.name)
-    analytics.init_db()
-
-    app_module.companion_db = cdb
-    app_module.study_analytics = analytics
+    stores = init_all_app_globals(tmp.name)
     app_module.app.config['TESTING'] = True
 
     with app_module.app.test_client() as c:
-        yield c, analytics
+        yield c, stores['study_analytics']
 
     os.unlink(tmp.name)
 

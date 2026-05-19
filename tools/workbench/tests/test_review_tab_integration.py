@@ -27,8 +27,12 @@ def client_with_linked_session(monkeypatch):
         db = get_db()
         db.init_db()
         # The existing study_session_view route uses the `companion_db` global,
-        # not get_db(). Point the global at the same temp DB so the route sees
-        # the test data we insert below.
+        # not get_db(). Init ALL globals on the same temp DB so the route's
+        # cross-references (study_analytics, session_decisions, etc.) don't
+        # crash. Then overwrite companion_db with the local handle so we can
+        # insert test rows directly.
+        from conftest import init_all_app_globals
+        init_all_app_globals(db_path)
         app_mod.companion_db = db
         conn = db._conn()
         conn.execute("""

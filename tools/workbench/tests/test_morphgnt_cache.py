@@ -214,11 +214,9 @@ def test_word_info_endpoint_nt(cache_db):
 
     tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
     tmp.close()
-    cdb = CompanionDB(tmp.name)
-    cdb.init_db()
-    seed_question_bank(cdb)
-
-    app_module.companion_db = cdb
+    # Per bug review #7-#8: init ALL app globals together (not just companion_db).
+    from conftest import init_all_app_globals
+    init_all_app_globals(tmp.name)
     app_module.app.config['TESTING'] = True
 
     # Patch morphgnt_cache to use our temp DB
