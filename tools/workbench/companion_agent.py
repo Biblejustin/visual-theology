@@ -137,69 +137,69 @@ def select_persona_prompt(*, persona, passage, genre, session_elapsed_seconds,
     )
 
 
+
+def _load_card_work_summary(db, session_id):
+    """Concatenate Bryan's card responses, study-bible stars, and notepad
+    into a single summary block for the system prompt."""
+    parts = []
+    for resp in db.get_card_responses(session_id):
+        if resp.get("content"):
+            parts.append(f"[{resp['phase']}] {resp['content']}")
+    annotations = db.get_card_annotations(session_id)
+    if annotations:
+        parts.append("\n[Study Bible Stars]")
+        for a in annotations:
+            line = f"  ★ {a['source']}: \"{a['starred_text']}\""
+            if a.get("note"):
+                line += f" → {a['note']}"
+            parts.append(line)
+    notepad = db.get_card_notepad(session_id, "study_bibles")
+    if notepad:
+        parts.append(f"\n[Study Bible Notepad]\n{notepad}")
+    return "\n".join(parts) if parts else ""
+
+
 def stream_study_response(session_id, user_message, db, analytics=None,
-                          model='claude-sonnet-4-20250514', accuser=None):
+                          model='claude-sonnet-4-20250514', accuser=None,
+                          llm_client=None):
     """Generator yielding SSE events for conversation-first study streaming.
 
     Uses full conversation history (not phase-scoped) for natural multi-session flow.
+    Streaming goes through llm_client.AnthropicClient so the tool-use loop is
+    the SAME loop used by sermon_coach_agent + meta_coach_agent. Pass
+    `llm_client` to inject a CannedLLMClient in tests.
     """
-    try:
-        import anthropic
-    except ImportError:
-        yield _sse_event('error', {'message': 'Anthropic SDK not installed. Run: pip install anthropic'})
-        return
-
     api_key = anthropic_api_key()
-    if not api_key:
+    if api_key is None and llm_client is None:
         yield _sse_event('error', {'message': 'ANTHROPIC_API_KEY not set'})
         return
 
-    client = anthropic.Anthropic(api_key=api_key)
+    if llm_client is None:
+        from llm_client import AnthropicClient
+        llm_client = AnthropicClient(api_key=api_key, model=model)
 
-    # Load session
     session = db.get_session(session_id)
     if not session:
         yield _sse_event('error', {'message': 'Session not found'})
         return
 
-    # Build outline summary
     outline_tree = db.get_outline_tree(session_id)
     outline_summary = _format_outline_summary(outline_tree) if outline_tree else ''
+    card_work_summary = _load_card_work_summary(db, session_id)
 
-    # Load Bryan's card-phase work for the system prompt
-    card_responses = db.get_card_responses(session_id)
-    card_annotations = db.get_card_annotations(session_id)
-    card_notepad = db.get_card_notepad(session_id, "study_bibles")
+    # Coaching context for the system prompt (sermon coach memory bridge).
+    from coaching_bridge import (
+        load_active_commitment, load_coaching_insights,
+        build_coaching_prompt_section,
+    )
+    coaching_context = build_coaching_prompt_section(
+        load_active_commitment(db), load_coaching_insights(db))
 
-    card_parts = []
-    for resp in card_responses:
-        if resp.get("content"):
-            card_parts.append(f"[{resp['phase']}] {resp['content']}")
-    if card_annotations:
-        card_parts.append("\n[Study Bible Stars]")
-        for a in card_annotations:
-            line = f"  \u2605 {a['source']}: \"{a['starred_text']}\""
-            if a.get("note"):
-                line += f" \u2192 {a['note']}"
-            card_parts.append(line)
-    if card_notepad:
-        card_parts.append(f"\n[Study Bible Notepad]\n{card_notepad}")
-    card_work_summary = "\n".join(card_parts) if card_parts else ""
-
-    # Load coaching context for the study prompt
-    from coaching_bridge import load_active_commitment, load_coaching_insights, build_coaching_prompt_section
-    commitment = load_active_commitment(db)
-    insights = load_coaching_insights(db)
-    coaching_context = build_coaching_prompt_section(commitment, insights)
-
-    # Build system prompt via the phase-cluster router. Cross-agent data layer
-    # (agent_data_provider) populates the composing/editing-specific context
-    # fields (rut history, manuscript, length estimate, active commitment, etc.)
-    # from companion.db. Research persona uses defaults.
+    # Cross-agent data layer populates composing/editing-specific context.
+    # pastor_feedback + session_decisions live on the app module; import
+    # lazily so tests that don't initialize the app still work.
     from agent_data_provider import context_for_persona
     persona = persona_for_phase(session['current_phase'])
-    # pastor_feedback lives in app.py as a module global; import lazily to
-    # avoid circular import and degrade gracefully if not initialized.
     try:
         from app import pastor_feedback as _pf, session_decisions as _sd
     except ImportError:
@@ -219,26 +219,19 @@ def stream_study_response(session_id, user_message, db, analytics=None,
         **extra_context,
     )
     if system_prompt is None:
-        # Silent persona — forward-compat guard. Today /study/'s catch-all
-        # 'study' phase routes to research; this branch is unreachable in
-        # current data but protects against future silent-phase routing
-        # into stream_study_response without a UI guard upstream.
+        # Silent persona — forward-compat guard for future silent-phase
+        # routing without a UI guard upstream.
         yield _sse_event('error', {'message': 'No chat surface in silent phase.'})
         return
 
-    # Build messages from FULL conversation history (not phase-scoped)
-    all_messages = db.get_messages(session_id, limit=100)
+    # Build messages from FULL conversation history (not phase-scoped).
     messages = []
-    for m in all_messages:
-        if m['role'] == 'user' and m.get('content'):
-            messages.append({'role': 'user', 'content': m['content']})
-        elif m['role'] == 'assistant' and m.get('content'):
-            messages.append({'role': 'assistant', 'content': m['content']})
-
-    # Add current user message
+    for m in db.get_messages(session_id, limit=100):
+        if m['role'] in ('user', 'assistant') and m.get('content'):
+            messages.append({'role': m['role'], 'content': m['content']})
     messages.append({'role': 'user', 'content': user_message})
 
-    # Save user message + accuser-voice detection (Cycle 2a: log-only)
+    # Save user message + accuser-voice detection (Cycle 2a: log-only).
     mid = db.save_message(session_id, 'study', 'user', user_message)
     if accuser is not None:
         try:
@@ -248,7 +241,6 @@ def stream_study_response(session_id, user_message, db, analytics=None,
         except Exception:
             pass  # detection is observational; never block the user flow
 
-    # Session context for tool execution
     session_context = {
         'session_id': session_id,
         'passage_ref': session['passage_ref'],
@@ -262,76 +254,59 @@ def stream_study_response(session_id, user_message, db, analytics=None,
     }
 
     tool_defs = tool_defs_for_persona(persona)
-
-    # Streaming loop with tool use
     full_response_text = ''
 
-    while True:
+    # Tool-use loop. Same shape as sermon_coach_agent + meta_coach_agent —
+    # llm_client.stream_message normalizes the SDK's content_block_*
+    # events into typed dicts so callers don't repeat the SDK plumbing.
+    MAX_TOOL_ROUNDS = 8
+    for _round in range(MAX_TOOL_ROUNDS):
         tool_use_blocks = []
-        current_tool = None
-
+        stop_reason = 'end_turn'
+        content = []
         try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=4096,
-                system=system_prompt,
-                messages=messages,
-                tools=tool_defs,
-            ) as stream:
-                for event in stream:
-                    if event.type == 'content_block_start':
-                        if hasattr(event.content_block, 'type') and event.content_block.type == 'tool_use':
-                            current_tool = {
-                                'id': event.content_block.id,
-                                'name': event.content_block.name,
-                                'input_json': ''
-                            }
-                            yield _sse_event('tool_start', {'name': event.content_block.name})
-                    elif event.type == 'content_block_delta':
-                        if hasattr(event.delta, 'text'):
-                            full_response_text += event.delta.text
-                            yield _sse_event('text_delta', {'text': event.delta.text})
-                        elif hasattr(event.delta, 'partial_json'):
-                            if current_tool:
-                                current_tool['input_json'] += event.delta.partial_json
-                    elif event.type == 'content_block_stop':
-                        if current_tool:
-                            try:
-                                tool_input = json.loads(current_tool['input_json'])
-                            except json.JSONDecodeError:
-                                tool_input = {}
-                            result = execute_tool(current_tool['name'], tool_input, session_context)
-                            tool_use_blocks.append((current_tool, result))
-                            yield _sse_event('tool_result', {
-                                'name': current_tool['name'],
-                                'result': result
-                            })
-                            # Track outline saves
-                            if current_tool['name'] == 'save_to_outline' and analytics:
-                                analytics.record_outline_event(session_id, 'add',
-                                                              tool_input.get('node_type', 'note'))
-                            current_tool = None
-
-                response = stream.get_final_message()
-
+            for event in llm_client.stream_message(
+                    system=system_prompt, messages=messages, tools=tool_defs):
+                if event['type'] == 'text_delta':
+                    full_response_text += event.get('text', '')
+                    yield _sse_event('text_delta', {'text': event['text']})
+                elif event['type'] == 'tool_use':
+                    yield _sse_event('tool_start', {'name': event['tool_name']})
+                    result = execute_tool(event['tool_name'], event['tool_input'],
+                                          session_context)
+                    tool_use_blocks.append({'tool': event, 'result': result})
+                    yield _sse_event('tool_result', {
+                        'name': event['tool_name'], 'result': result,
+                    })
+                    if event['tool_name'] == 'save_to_outline' and analytics:
+                        analytics.record_outline_event(
+                            session_id, 'add',
+                            event['tool_input'].get('node_type', 'note'))
+                elif event['type'] == 'message_complete':
+                    stop_reason = event.get('stop_reason', 'end_turn')
+                    content = event.get('content', [])
+                elif event['type'] == 'error':
+                    yield _sse_event('error', {'message': event.get('error', 'unknown')})
+                    return
         except Exception as e:
             yield _sse_event('error', {'message': str(e)})
             break
 
-        if response.stop_reason == 'tool_use':
-            messages.append({'role': 'assistant', 'content': response.content})
-            tool_results = []
-            for tool, result in tool_use_blocks:
-                tool_results.append({
-                    'type': 'tool_result',
-                    'tool_use_id': tool['id'],
-                    'content': json.dumps(result) if isinstance(result, dict) else str(result)
-                })
-            messages.append({'role': 'user', 'content': tool_results})
-        else:
+        if stop_reason != 'tool_use' or not tool_use_blocks:
             break
 
-    # Save assistant response
+        messages.append({'role': 'assistant', 'content': content})
+        tool_results = []
+        for block in tool_use_blocks:
+            tool_results.append({
+                'type': 'tool_result',
+                'tool_use_id': block['tool']['tool_use_id'],
+                'content': (json.dumps(block['result'])
+                            if isinstance(block['result'], dict)
+                            else str(block['result'])),
+            })
+        messages.append({'role': 'user', 'content': tool_results})
+
     if full_response_text:
         db.save_message(session_id, 'study', 'assistant', full_response_text)
         if analytics:
