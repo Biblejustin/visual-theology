@@ -471,6 +471,20 @@ class CompanionDB:
                 superseded_by INTEGER REFERENCES coaching_insights(id),
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS audio_recordings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                phase TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                content_type TEXT,
+                byte_size INTEGER,
+                duration_sec REAL,
+                transcript_excerpt TEXT,
+                quality TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_audio_recordings_session
+                ON audio_recordings(session_id, created_at DESC);
             CREATE TABLE IF NOT EXISTS session_coaching_exposure (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -864,6 +878,39 @@ class CompanionDB:
         row = conn.execute("SELECT * FROM question_bank WHERE id = ?", (question_id,)).fetchone()
         conn.close()
         return dict(row) if row else None
+
+    def save_audio_recording(self, *, session_id, phase, file_path,
+                              content_type, byte_size, duration_sec,
+                              transcript_excerpt, quality):
+        """Persist a row pointing to an on-disk audio file.
+
+        Bryan keeps the raw audio so a junk Whisper transcript can be
+        re-run later (better model, manual transcription, or simply
+        listened back as a prayer he didn't want transcribed at all).
+        """
+        conn = self._conn()
+        cur = conn.execute("""
+            INSERT INTO audio_recordings
+                (session_id, phase, file_path, content_type, byte_size,
+                 duration_sec, transcript_excerpt, quality, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (session_id, phase, file_path, content_type, byte_size,
+              duration_sec, transcript_excerpt, quality, self._now()))
+        conn.commit()
+        rid = cur.lastrowid
+        conn.close()
+        return rid
+
+    def list_audio_recordings(self, session_id, limit=50):
+        conn = self._conn()
+        rows = conn.execute("""
+            SELECT * FROM audio_recordings
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (session_id, limit)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
 
     def update_timer(self, session_id, remaining_seconds, paused=None, elapsed_delta=0):
         conn = self._conn()

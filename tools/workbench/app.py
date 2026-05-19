@@ -1503,9 +1503,43 @@ def study_card_autosave(session_id):
 _TRANSCRIBE_MAX_BYTES = 25 * 1024 * 1024
 
 
+_AUDIO_RECORDINGS_DIR = os.environ.get(
+    "AUDIO_RECORDINGS_DIR",
+    str(Path("/Volumes/External/Logos4/Data/audio_recordings"))
+)
+
+
+def _save_audio_blob_to_disk(audio_bytes, session_id, content_type):
+    """Write the raw audio to /Volumes/External/Logos4/Data/audio_recordings/
+    session_<id>/<utc-iso>.<ext>. Returns the absolute file path."""
+    ext_map = {
+        'audio/webm': '.webm', 'audio/ogg': '.ogg',
+        'audio/mp4': '.mp4', 'audio/m4a': '.m4a',
+        'audio/wav': '.wav', 'audio/x-wav': '.wav',
+        'audio/mpeg': '.mp3', 'audio/mp3': '.mp3',
+    }
+    ct = (content_type or 'audio/webm').lower().split(';')[0].strip()
+    ext = ext_map.get(ct, '.webm')
+    base = Path(_AUDIO_RECORDINGS_DIR) / f"session_{session_id}"
+    base.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime, timezone
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # Add a short random suffix in case two recordings land in the same second
+    import secrets
+    suffix = secrets.token_hex(2)
+    path = base / f"{stamp}_{suffix}{ext}"
+    path.write_bytes(audio_bytes)
+    return str(path)
+
+
 @app.route("/study/session/<int:session_id>/transcribe", methods=["POST"])
 def study_transcribe(session_id):
-    """Run voice-to-text on an uploaded audio blob and return the transcript."""
+    """Run voice-to-text on an uploaded audio blob and return the transcript.
+
+    Also persists the raw audio to disk so Bryan can re-transcribe later
+    (better model, manual review, or listen back to a prayer he didn't want
+    transcribed at all). Storage is on the External drive; never uploaded.
+    """
     session = companion_db.get_session(session_id)
     if not session:
         return jsonify({"error": "session not found"}), 404
@@ -1528,6 +1562,25 @@ def study_transcribe(session_id):
     except Exception as e:
         app.logger.exception("transcription failed")
         return jsonify({"error": f"transcription failed: {e}"}), 500
+
+    # Persist the audio file + DB row. Save AFTER transcription succeeded so
+    # we don't keep blobs for failed runs (the user retries those). If the
+    # save fails for any reason, log it but still return the transcript —
+    # the dictation flow should not break because of disk-write issues.
+    try:
+        audio_path = _save_audio_blob_to_disk(audio_bytes, session_id, content_type)
+        companion_db.save_audio_recording(
+            session_id=session_id,
+            phase=session.get('current_phase') or '',
+            file_path=audio_path,
+            content_type=content_type,
+            byte_size=len(audio_bytes),
+            duration_sec=float(result.get('duration_sec') or 0.0),
+            transcript_excerpt=(result.get('text') or '')[:500],
+            quality=result.get('quality') or 'unknown',
+        )
+    except Exception:
+        app.logger.exception("audio archive write failed (transcript still returned)")
 
     return jsonify(result)
 
