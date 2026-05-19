@@ -25,7 +25,20 @@ typing short messages, dictating ideas/prayer.
    templates that didn't have them. The `study_*.html` templates
    already had them.
 
-## What you need to do for Cloudflare
+## Cloudflare status (live as of 2026-05-18)
+
+`https://study.mightyoakshybrid.org/` is already routed to
+`localhost:5111` via cloudflared. The route was already configured in
+`~/.cloudflared/config-lms.yml` and the cloudflared daemon was
+already running it (PID confirmed). DNS resolves, TLS handshake
+succeeds, app responds 200 on `/login`. **No further Cloudflare
+changes were needed.**
+
+The `LOGOS_FORCE_HTTPS_COOKIE=1` env var is now set on the running
+PM2 process and persisted to `~/.pm2/dump.pm2` (verified). On any
+`pm2 resurrect` after a reboot, it will be restored.
+
+## Reference — adding additional Cloudflare routes
 
 You said the Mac is already cloudflared as `mightyoakshybrid`. To add
 the study companion (port 5111), pick one of two patterns:

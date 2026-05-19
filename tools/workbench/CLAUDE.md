@@ -11,7 +11,7 @@ This Mac runs multiple web apps under a single PM2 instance (user: `family`). **
 | `couple-companion` | 8000 | Couple Companion | `/Volumes/External/claude_projects/counseling_apps/couple_companion` | `pm2 start .venv/bin/uvicorn --name couple-companion --interpreter none -- main:app --port 8000` |
 | `mighty-oaks` | 3000 | MightyOaks LMS | `/Volumes/NetworkStorage/hybrid` | `pm2 start server.js --name mighty-oaks` |
 | `adhd-align` | 5003 | ADHD/Align | `/Volumes/External/adhd` | `pm2 start npm --name adhd-align -- start -- -p 5003` |
-| `study-companion` | — | **This app (Study Companion)** | `/Volumes/External/Logos4/tools/workbench` | `pm2 start app.py --name study-companion --interpreter python3` |
+| `study-companion` | 5111 | **This app (Study Companion)** — public via `https://study.mightyoakshybrid.org` (cloudflared `config-lms.yml`) | `/Volumes/External/Logos4/tools/workbench` | `LOGOS_FORCE_HTTPS_COOKIE=1 pm2 start app.py --name study-companion --interpreter python3` |
 
 TendFlock (port 3001) runs under a separate `tendflock` user with its own PM2 — it is not in this process list.
 
@@ -27,7 +27,7 @@ TendFlock (port 3001) runs under a separate `tendflock` user with its own PM2 �
 
 ```bash
 cd /Volumes/External/Logos4/tools/workbench
-pm2 start app.py --name study-companion --interpreter python3
+LOGOS_FORCE_HTTPS_COOKIE=1 pm2 start app.py --name study-companion --interpreter python3
 pm2 save
 ```
 
@@ -54,7 +54,7 @@ cd /Volumes/External/adhd
 pm2 start npm --name adhd-align -- start -- -p 5003
 
 cd /Volumes/External/Logos4/tools/workbench
-pm2 start app.py --name study-companion --interpreter python3
+LOGOS_FORCE_HTTPS_COOKIE=1 pm2 start app.py --name study-companion --interpreter python3
 
 pm2 save
 ```
