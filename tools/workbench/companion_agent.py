@@ -94,7 +94,8 @@ def select_persona_prompt(*, persona, passage, genre, session_elapsed_seconds,
                           active_commitment='', recent_coach_one_changes='',
                           prior_overruns_summary='',
                           recent_positive_feedback='',
-                          target_length_committed=None):
+                          target_length_committed=None,
+                          elapsed_in_phase_seconds=0):
     """Build the system prompt for the active persona. Returns None for silent.
 
     Imports are local to avoid a circular import: persona_prompts imports
@@ -122,6 +123,7 @@ def select_persona_prompt(*, persona, passage, genre, session_elapsed_seconds,
             prior_phase_summary=prior_phase_summary,
             sermon_coach_pattern_summary=sermon_coach_pattern_summary,
             decision_summary=decision_summary,
+            elapsed_in_phase_seconds=elapsed_in_phase_seconds,
         )
     if persona == 'editing':
         return build_editing_partner_prompt(
@@ -135,6 +137,7 @@ def select_persona_prompt(*, persona, passage, genre, session_elapsed_seconds,
             prior_overruns_summary=prior_overruns_summary,
             recent_positive_feedback=recent_positive_feedback,
             target_length_committed=target_length_committed,
+            elapsed_in_phase_seconds=elapsed_in_phase_seconds,
         )
     # default: research
     return build_research_partner_prompt(
@@ -144,6 +147,7 @@ def select_persona_prompt(*, persona, passage, genre, session_elapsed_seconds,
         outline_summary=outline_summary,
         card_work_summary=card_work_summary,
         coaching_context=coaching_context,
+        elapsed_in_phase_seconds=elapsed_in_phase_seconds,
     )
 
 
@@ -222,6 +226,19 @@ def stream_study_response(session_id, user_message, db, analytics=None,
     extra_context = context_for_persona(db, session_id, persona,
                                         pastor_feedback_store=_pf,
                                         session_decision_store=_sd)
+
+    # Elapsed-in-phase fuels the per-phase time gauge in the active-focus
+    # block. phase_events is keyed by the legacy current_phase (since the
+    # v2 picker doesn't yet fire events), so use that as the lookup key.
+    # Degrades to 0 cleanly when no analytics or no events recorded yet.
+    elapsed_in_phase = 0
+    if analytics and session.get('current_phase'):
+        try:
+            elapsed_in_phase = int(analytics.get_phase_time_seconds(
+                session_id, session['current_phase']))
+        except Exception:
+            elapsed_in_phase = 0
+
     system_prompt = select_persona_prompt(
         persona=persona,
         passage=session['passage_ref'],
@@ -231,6 +248,7 @@ def stream_study_response(session_id, user_message, db, analytics=None,
         outline_summary=outline_summary,
         card_work_summary=card_work_summary,
         coaching_context=coaching_context,
+        elapsed_in_phase_seconds=elapsed_in_phase,
         **extra_context,
     )
     if system_prompt is None:

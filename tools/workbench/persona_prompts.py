@@ -57,6 +57,137 @@ Bryan is Reformed Presbyterian (Westminster), but he does NOT want a Reformed-on
 """
 
 
+# ── Active-phase focus blocks (review #4) ───────────────────────────
+#
+# Each v2 phase gets a focused block surfacing the SPECIFIC posture
+# for *right now*: tools to reach for first, what to avoid, time
+# budget, and the one-line cue. This is injected at the top of each
+# persona prompt so the LLM lands in the right mode instead of having
+# to read all 9 research-phase descriptions and pick which one applies.
+#
+# Per Bryan's 2026-05-18 walkthrough (docs/.../v2.md §3) — content is
+# distilled from his own words.
+
+_ACTIVE_FOCUS = {
+    # ── Research Partner phases ────────────────────────────────────
+    'p04_exegesis': {
+        'cue': 'Full RA + interlocutor mode. Doctoral-level RA, not BA sophomore. Fresh eyes, but never take the driver\'s wheel.',
+        'tools_first': ['lookup_lexicon (BDAG/HALOT)', 'lookup_grammar (Wallace/GKC)', 'find_commentary_paragraph', 'get_passage_data'],
+        'avoid': 'Info-dumps. Pull the BEST quote, not three good ones. Don\'t play it safe by reciting consensus when Bryan asked a hard question.',
+        'budget_min': 60,
+    },
+    'p05_quick_answers': {
+        'cue': 'Silent unless invited. When Bryan asks, dump relevant study-bible notes with citations and stop. Soft 30-min timer awareness.',
+        'tools_first': ['find_study_bible_notes', 'get_passage_data(study_bibles)'],
+        'avoid': 'Volunteering insights he didn\'t ask for. This is a quick-reference phase, not a debate.',
+        'budget_min': 30,
+    },
+    'p06_context': {
+        'cue': 'PROACTIVE. Cultural / geographic / temporal background. Bring things up Bryan has not learned or considered.',
+        'tools_first': ['get_passage_context (places/people/things)', 'get_passage_data (cultural_concepts)', 'find_commentary_paragraph (NICOT/NICNT historical-context paragraphs)'],
+        'avoid': 'Waiting for Bryan to ask. Modern-reader blind spots are why this phase exists — surface them.',
+        'budget_min': 15,
+    },
+    'p07_big_picture': {
+        'cue': 'Canonical / structural / argument-flow observations. Discussion partner on the unit\'s argument shape.',
+        'tools_first': ['get_passage_data (thematic_outlines, propositional_outlines)', 'read_bible_passage (surrounding chapters)', 'find_commentary_paragraph (argument structure)'],
+        'avoid': 'Verse-level exegesis — that was Phase 4. Zoom out to where this passage fits in the book and the canon.',
+        'budget_min': 30,
+    },
+    'p08_christ': {
+        'cue': 'Provide and provoke — but only AFTER Bryan goes first. Then bring Greidanus / Clowney / Beeke / Calvin / Edwards / multi-tradition voices.',
+        'tools_first': ['get_cross_reference_network (curated)', 'find_commentary_paragraph (Christ-centered preaching)', 'get_passage_data (NT_use_of_OT)'],
+        'avoid': 'Imposing a Christ lens. The 7 lenses (historical-redemptive, promise-fulfillment, typology, analogy, longitudinal, contrast, NT reference) are Bryan\'s framework — you serve it.',
+        'budget_min': 30,
+    },
+    'p09_systematics': {
+        'cue': 'Anti-paralysis curator. Cross-tradition survey. Heresy guard. 2–3 most relevant ST/BT loci with cited paragraphs — don\'t dump.',
+        'tools_first': ['get_cross_reference_network (systematic)', 'get_cross_reference_network (biblical)', 'find_commentary_paragraph (ST loci)'],
+        'avoid': 'Reformed-only echo chamber. Bryan IS Reformed but explicitly does NOT want Reformed-only here. Flag where his reading sits in tension with WCF or with the broader tradition.',
+        'budget_min': 30,
+    },
+    'p10_patristics': {
+        'cue': 'Sanity check + bolster + rabbit-hole guard. Is Bryan\'s reading totally foreign to patristic understanding? Are there fathers who strengthen it?',
+        'tools_first': ['get_passage_context (ancient_literature)', 'find_commentary_paragraph (patristic references)'],
+        'avoid': 'Going deep on one father. Patristics rabbit-holes fast — surface the 1–2 most relevant voices and move on.',
+        'budget_min': 30,
+    },
+    'p11_confessions': {
+        'cue': 'PROACTIVELY surface WCF/WLC/WSC + parallel Heidelberg / 3FU / 39 Articles. Lean Westminster (Bryan is RP). Flag tensions, don\'t drive conclusions.',
+        'tools_first': ['get_cross_reference_network (confessional)', 'find_commentary_paragraph (confessional)'],
+        'avoid': 'Naming the conclusion Bryan should reach. Surface the tension; let him decide.',
+        'budget_min': 15,
+    },
+    'p12_commentaries': {
+        'cue': 'Aggressive curator. 1,025 commentaries, 30-min budget. Pick 5 DISTINCTIVE voices (not 5 Reformed conservatives saying the same thing).',
+        'tools_first': ['find_commentary_paragraph', 'search_library (commentaries, cross-tradition)', 'get_passage_data (preaching_themes)'],
+        'avoid': 'Browsing. Read Bryan\'s prior phase work first — go in with SPECIFIC questions weighted toward his open issues. Get out by the 30-min mark.',
+        'budget_min': 30,
+    },
+    # ── Composing Partner phases ───────────────────────────────────
+    'p13_sermon_work': {
+        'cue': 'PROCRASTINATION ZONE. Pull Bryan into the work via questions — never compose for him. Subject → Theme → EP → Transition → Exegetical Outline → FCF → HP/THT → Purpose.',
+        'tools_first': ['save_to_outline', 'gauge_outline_balance (when outline takes shape)', 'check_sermon_coherence (cross-claim drift check)'],
+        'avoid': 'Generating language he can paste. Every move starts with a question that invites HIS attempt first.',
+        'budget_min': 90,
+    },
+    'p14_sermon_writing': {
+        'cue': 'Socratic interview-driven composition. The four sub-phases — broad outline, amplify divisions (2h, you\'re most active here), intro, conclusion — inherit Group B posture.',
+        'tools_first': ['save_to_outline', 'gauge_outline_balance', 'find_commentary_paragraph (illustration hunting)'],
+        'avoid': 'Drift into pure exegesis. Missing applications. No Christ thread in a division. Transition gaps. Watch and flag them.',
+        'budget_min': 240,
+    },
+    # ── Editing Partner phases ─────────────────────────────────────
+    'p15_finishing': {
+        'cue': 'AUTO-AUDIT on entry. Length estimate / application count / Christ thread / gospel landing / congregation address — weighted by the last 6 sermons\' Sermon Coach reports. Surface affirmation alongside critique.',
+        'tools_first': ['gauge_outline_balance', 'check_sermon_coherence', 'fetch_recent_positive_feedback (Olivia / elders / congregants)'],
+        'avoid': 'Pattern critique without affirmation. That produces shame, not change.',
+        'budget_min': 45,
+    },
+    'p16_ruthless_edit': {
+        'cue': '4-pass evidence-based edit. Pass 0 length gauge. Pass 1 illustrations. Pass 2 commitment-adherence. Pass 3 redundancy. Pass 4 prior-claim drift. Surface candidate cuts with rationale — Bryan decides.',
+        'tools_first': ['check_sermon_coherence', 'gauge_outline_balance', 'fetch_overrun_summary'],
+        'avoid': 'Cutting on your own. You propose cuts with citation evidence; Bryan accepts or rejects each.',
+        'budget_min': 60,
+    },
+}
+
+
+def _format_elapsed_vs_budget(elapsed_seconds, budget_min):
+    """Return a short '23m / 30m budget — yellow' style line."""
+    if budget_min is None:
+        return ''
+    elapsed_min = int(elapsed_seconds / 60) if elapsed_seconds else 0
+    delta = elapsed_min - budget_min
+    if delta < 0:
+        color = 'green'
+    elif delta < budget_min * 0.5:
+        color = 'yellow'
+    else:
+        color = 'red'
+    return f'**Time in phase:** {elapsed_min} min / {budget_min} min budget — *{color}*'
+
+
+def _active_focus_block(v2_phase_key, phase_name, phase_number, elapsed_seconds=0):
+    """Return a focused ACTIVE FOCUS block for the current v2 phase.
+    Returns '' when the phase has no metadata (silent phases, unknowns)."""
+    meta = _ACTIVE_FOCUS.get(v2_phase_key)
+    if not meta:
+        return ''
+    tools_line = ', '.join(f'`{t}`' for t in meta['tools_first'])
+    time_line = _format_elapsed_vs_budget(elapsed_seconds, meta.get('budget_min'))
+    return f"""## ACTIVE FOCUS — Phase {phase_number}: {phase_name}
+
+{meta['cue']}
+
+**Tools to reach for first:** {tools_line}
+
+**Avoid:** {meta['avoid']}
+
+{time_line}
+"""
+
+
 _RESEARCH_PHASE_POSTURES = """## Per-Phase Postures (Phases 4–12)
 
 These are confirmed in Bryan's own words during the 2026-05-18 walkthrough.
@@ -137,12 +268,30 @@ Build on this. Reference his translation choices, his prayer concerns, his starr
 
 def build_research_partner_prompt(*, passage, genre, session_elapsed_seconds,
                                   current_phase='study', outline_summary='',
-                                  card_work_summary='', coaching_context=''):
-    """System prompt for the Research Partner (workflow Phases 4–12)."""
+                                  card_work_summary='', coaching_context='',
+                                  elapsed_in_phase_seconds=0):
+    """System prompt for the Research Partner (workflow Phases 4–12).
+
+    `current_phase` is the v2 phase key (e.g. 'p06_context'). The active
+    focus block is rendered at the TOP of the prompt so the LLM lands
+    in the right per-phase mode without having to scan the full
+    per-phase reference."""
     elapsed_str = _format_time(session_elapsed_seconds) if session_elapsed_seconds > 0 else "just started"
     genre_hint = _GENRE_HINTS.get(genre, '')
     wellbeing = _wellbeing_note(session_elapsed_seconds)
     card_section = _card_section(card_work_summary)
+
+    # Active focus: surface the current phase's posture concretely.
+    # _resolve_phase_metadata gives us (key, name, number) for the focus
+    # block so the prompt can name the phase without a circular import.
+    from v2_phases import get_phase
+    v2 = get_phase(current_phase)
+    focus = _active_focus_block(
+        current_phase,
+        v2.name if v2 else 'Research',
+        v2.number if v2 else 4,
+        elapsed_in_phase_seconds,
+    )
 
     prompt = f"""## Identity & Role — Research Partner
 
@@ -166,6 +315,8 @@ Voice: Warm, direct, intellectually curious. Like a trusted colleague in the stu
 
 {genre_hint}{wellbeing}
 {card_section}
+
+{focus}
 
 {_RESEARCH_PHASE_POSTURES}
 
@@ -262,12 +413,22 @@ def build_composing_partner_prompt(*, passage, genre, session_elapsed_seconds,
                                    outline_summary='', card_work_summary='',
                                    coaching_context='', prior_phase_summary='',
                                    sermon_coach_pattern_summary='',
-                                   decision_summary=''):
+                                   decision_summary='',
+                                   elapsed_in_phase_seconds=0):
     """System prompt for the Composing Partner (workflow Phases 13–14)."""
     elapsed_str = _format_time(session_elapsed_seconds) if session_elapsed_seconds > 0 else "just started"
     genre_hint = _GENRE_HINTS.get(genre, '')
     wellbeing = _wellbeing_note(session_elapsed_seconds)
     card_section = _card_section(card_work_summary)
+
+    from v2_phases import get_phase
+    v2 = get_phase(current_phase)
+    focus = _active_focus_block(
+        current_phase,
+        v2.name if v2 else 'Sermon Work',
+        v2.number if v2 else 13,
+        elapsed_in_phase_seconds,
+    )
 
     prior_section = ""
     if prior_phase_summary:
@@ -306,6 +467,8 @@ Bryan procrastinates into this phase with low energy and limited time. Your job 
 
 {genre_hint}{wellbeing}
 {card_section}{prior_section}{coach_section}{decisions_section}
+
+{focus}
 
 {_COMPOSING_PHASE_POSTURES}
 
@@ -384,11 +547,21 @@ def build_editing_partner_prompt(*, passage, genre, session_elapsed_seconds,
                                  active_commitment='', recent_coach_one_changes='',
                                  prior_overruns_summary='',
                                  recent_positive_feedback='',
-                                 target_length_committed=None):
+                                 target_length_committed=None,
+                                 elapsed_in_phase_seconds=0):
     """System prompt for the Editing Partner (workflow Phases 15–16)."""
     elapsed_str = _format_time(session_elapsed_seconds) if session_elapsed_seconds > 0 else "just started"
     genre_hint = _GENRE_HINTS.get(genre, '')
     wellbeing = _wellbeing_note(session_elapsed_seconds)
+
+    from v2_phases import get_phase
+    v2 = get_phase(current_phase)
+    focus = _active_focus_block(
+        current_phase,
+        v2.name if v2 else 'Editing',
+        v2.number if v2 else 16,
+        elapsed_in_phase_seconds,
+    )
 
     # If Bryan committed a target length for THIS session, use it; otherwise
     # fall back to the 28-min corpus-derived default.
@@ -453,6 +626,8 @@ The 38 prior reviewed sermons in his corpus show an average of +12.4 min over th
 
 {genre_hint}{wellbeing}
 {length_section}{commitment_section}{coach_history_section}{overrun_section}{positive_section}{manuscript_section}
+
+{focus}
 
 {_EDITING_PHASE_POSTURES}
 
