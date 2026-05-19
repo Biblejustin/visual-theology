@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ session.passage_ref }} — Study</title>
-    <link rel="stylesheet" href="/static/study.css?v=13">
+    <link rel="stylesheet" href="/static/study.css?v=14">
 </head>
 <body class="session-layout" data-mode="{{ mode }}">
     {% include "partials/horizon_bar.html" %}
@@ -77,6 +77,7 @@
                 {% if committed_decisions is defined and open_decision_keys is defined %}
                 {% include "partials/decisions_panel.html" %}
                 {% endif %}
+                {% include "partials/next_action_line.html" %}
                 <div id="conversation-thread">
                     {% for msg in messages %}
                     <div class="conv-message {{ msg.role }}">

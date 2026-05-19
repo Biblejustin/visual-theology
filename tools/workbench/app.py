@@ -388,6 +388,7 @@ _CUTOFF_BLOCKED_PATH_PATTERNS = (
     re.compile(r'^/study/session/\d+/decisions/(set|clear)$'),
     re.compile(r'^/study/session/\d+/delete$'),
     re.compile(r'^/study/session/\d+/v2-phase$'),
+    re.compile(r'^/study/session/\d+/next-action/refresh$'),
 )
 
 
@@ -601,10 +602,67 @@ def _save_card_summary_for_ai(session_id):
 
 @app.route("/study/")
 def study_index():
-    """Start page — enter a passage or continue a session."""
+    """Start page — re-entry dashboard.
+
+    Per the 2026-05-19 ADHD UI research doc + my opinion: re-entry is
+    a core ADHD failure point. The top of /study/ is now a 'Resume X'
+    card surfaced from the most-recently-touched active session, with
+    last-touch human time + the cached next-action cue. Below that:
+    the new-passage form and the recent-sessions list (existing UI).
+    """
     sessions = companion_db.list_sessions(status='active')
     error = request.args.get('error')
-    return render_template("study_start.html", sessions=sessions, error=error)
+
+    # Resume card: most recently updated active session, NOT a child.
+    # 'updated_at' is bumped by most writes (outline, decisions, clock,
+    # messages) which makes it a reasonable proxy for last meaningful
+    # touch. Children are filtered out so a series doesn't shadow its
+    # parent on the resume card.
+    resume = None
+    if sessions:
+        non_child = [s for s in sessions if not s.get('parent_session_id')]
+        candidates = non_child or sessions
+        resume = max(candidates,
+                     key=lambda s: s.get('updated_at') or s.get('created_at') or '')
+        # Compute the persona for display, using v2 phase as the source
+        # of truth (consistent with what the agent + session page show).
+        from phase_cluster_router import persona_for_v2_phase as _persona_for_v2
+        from v2_phases import resolve_v2_phase as _resolve_v2, get_phase as _get_v2
+        v2_row = _resolve_v2(resume.get('v2_phase'), resume.get('current_phase'))
+        resume['_v2_phase_name'] = v2_row.name
+        resume['_persona'] = _persona_for_v2(v2_row.key)
+        resume['_last_touch_human'] = _humanize_since(resume.get('updated_at')
+                                                      or resume.get('created_at'))
+
+    return render_template("study_start.html",
+                           sessions=sessions, error=error, resume=resume)
+
+
+def _humanize_since(iso_ts):
+    """Turn an ISO timestamp into '18 minutes ago' style. Returns ''
+    when the input is unusable so callers don't render 'None ago'."""
+    if not iso_ts:
+        return ''
+    try:
+        from datetime import datetime, timezone
+        ts = datetime.fromisoformat(iso_ts.replace('Z', '+00:00'))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        delta = (datetime.now(timezone.utc) - ts).total_seconds()
+    except (ValueError, TypeError):
+        return ''
+    if delta < 0:
+        return 'just now'
+    if delta < 60:
+        return 'just now'
+    if delta < 3600:
+        m = int(delta // 60)
+        return f'{m} minute{"s" if m != 1 else ""} ago'
+    if delta < 86400:
+        h = int(delta // 3600)
+        return f'{h} hour{"s" if h != 1 else ""} ago'
+    d = int(delta // 86400)
+    return f'{d} day{"s" if d != 1 else ""} ago'
 
 
 @app.route("/api/study/session/<int:session_id>/decision", methods=["POST"])
@@ -868,9 +926,18 @@ def study_session_view(session_id):
         # Falls back to legacy mapping when picker hasn't been touched.
         _v2_row = _resolve_v2(session.get('v2_phase'), session.get('current_phase'))
         _resolved_persona = _persona_for_v2(_v2_row.key)
+        # Next-action cue + fallback to the static phase posture.
+        _next_action_text = session.get('next_action_text') or ''
+        try:
+            from persona_prompts import _ACTIVE_FOCUS
+            _active_focus_posture = (_ACTIVE_FOCUS.get(_v2_row.key) or {}).get('cue', '')
+        except Exception:
+            _active_focus_posture = ''
         return render_template("study_session.html",
                                session=session, mode="card",
                                persona=_resolved_persona,
+                               next_action_text=_next_action_text,
+                               active_focus_posture=_active_focus_posture,
                                time_coach=_tc_assess(companion_db, study_analytics, session_id),
                                time_coach_week=_tc_week(companion_db, study_analytics),
                                horizon=_tc_horizon(),
@@ -900,11 +967,20 @@ def study_session_view(session_id):
         # Falls back to legacy mapping when picker hasn't been touched.
         _v2_row = _resolve_v2(session.get('v2_phase'), session.get('current_phase'))
         _resolved_persona = _persona_for_v2(_v2_row.key)
+        # Next-action cue + fallback to the static phase posture.
+        _next_action_text = session.get('next_action_text') or ''
+        try:
+            from persona_prompts import _ACTIVE_FOCUS
+            _active_focus_posture = (_ACTIVE_FOCUS.get(_v2_row.key) or {}).get('cue', '')
+        except Exception:
+            _active_focus_posture = ''
         committed_decisions = session_decisions.list_decisions(session_id) if session_decisions else []
         open_decision_keys_list = session_decisions.open_decision_keys(session_id) if session_decisions else []
         return render_template("study_session.html",
                                session=session, mode="conversation",
                                persona=_resolved_persona,
+                               next_action_text=_next_action_text,
+                               active_focus_posture=_active_focus_posture,
                                time_coach=_tc_assess(companion_db, study_analytics, session_id),
                                time_coach_week=_tc_week(companion_db, study_analytics),
                                horizon=_tc_horizon(),
@@ -960,10 +1036,79 @@ def study_set_v2_phase(session_id):
     if status == 'missing':
         return jsonify({'error': 'session not found'}), 404
 
+    # Regenerate the cached next-action whenever the phase actually
+    # changed. No-op transitions skip the LLM call so cost is bounded
+    # to one Haiku call per real phase change.
+    if status == 'changed':
+        _maybe_generate_next_action(session_id, v2_key)
+
     return jsonify({
         'ok': True,
         'v2_phase': v2_key,
         'persona': get_phase(v2_key).persona,
+    })
+
+
+def _maybe_generate_next_action(session_id, v2_phase_key):
+    """Fire-and-forget LLM call to refresh the next-action cue.
+
+    Synchronous because Haiku is fast and this only fires on real phase
+    changes (~once per 15-60 min during prep). If we move to per-page
+    refresh later this should become async.
+    """
+    session = companion_db.get_session(session_id)
+    if not session:
+        return
+    card_summary = _build_card_work_summary(session_id) if session else ''
+    outline_summary = _build_outline_summary(session_id)
+    from next_action import generate_next_action
+    text = generate_next_action(
+        passage=session.get('passage_ref', ''),
+        genre=session.get('genre', ''),
+        v2_phase_key=v2_phase_key,
+        card_work_summary=card_summary,
+        outline_summary=outline_summary,
+    )
+    if text:
+        companion_db.set_next_action(session_id, text, v2_phase_key)
+
+
+def _build_card_work_summary(session_id):
+    """Compact summary of Bryan's card-phase responses for the
+    next-action generator. Same shape as the persona prompts'
+    _load_card_work_summary but trimmed."""
+    try:
+        from companion_agent import _load_card_work_summary
+        return _load_card_work_summary(companion_db, session_id)
+    except Exception:
+        return ''
+
+
+def _build_outline_summary(session_id):
+    try:
+        from companion_agent import _format_outline_summary
+        tree = companion_db.get_outline_tree(session_id)
+        return _format_outline_summary(tree) if tree else ''
+    except Exception:
+        return ''
+
+
+@app.route("/study/session/<int:session_id>/next-action/refresh", methods=["POST"])
+def study_refresh_next_action(session_id):
+    """Force-regenerate the cached next-action sentence. Used by the
+    small refresh affordance next to the Now line."""
+    session, err = require_session(companion_db, session_id)
+    if err: return err
+    v2_key = session.get('v2_phase')
+    if not v2_key:
+        from v2_phases import resolve_v2_phase
+        v2_row = resolve_v2_phase(None, session.get('current_phase'))
+        v2_key = v2_row.key
+    _maybe_generate_next_action(session_id, v2_key)
+    refreshed = companion_db.get_session(session_id)
+    return jsonify({
+        'ok': True,
+        'next_action': refreshed.get('next_action_text', ''),
     })
 
 

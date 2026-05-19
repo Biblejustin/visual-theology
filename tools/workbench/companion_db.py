@@ -361,6 +361,14 @@ class CompanionDB:
         # time except create the column.
         if 'v2_phase' not in existing_session_cols:
             conn.execute("ALTER TABLE sessions ADD COLUMN v2_phase TEXT")
+        # Cached EF-prosthesis next-action sentence (point-of-performance UI).
+        # Set when v2 phase changes; consumed by the session page top-of-thread
+        # line + the /study/ resume card. _set_for_v2_phase lets us detect
+        # staleness without comparing strings.
+        if 'next_action_text' not in existing_session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN next_action_text TEXT")
+        if 'next_action_set_for_v2_phase' not in existing_session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN next_action_set_for_v2_phase TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)")
         # Homiletics engine: insight storage + claim embeddings + outline tag cache
         conn.executescript("""
@@ -734,6 +742,19 @@ class CompanionDB:
                                    timer_paused = 0, updated_at = ?
                 WHERE id = ?
             """, (phase, timer_seconds, self._now(), session_id))
+
+    def set_next_action(self, session_id, text, v2_phase):
+        """Cache an EF-prosthesis next-action sentence + the v2 phase it
+        was generated for. Caller regenerates whenever
+        next_action_set_for_v2_phase != current session.v2_phase.
+        Returns rowcount so missing-id callers can detect no-op."""
+        with self._safe_write() as conn:
+            cur = conn.execute(
+                "UPDATE sessions SET next_action_text = ?, "
+                "next_action_set_for_v2_phase = ?, updated_at = ? "
+                "WHERE id = ?",
+                (text, v2_phase, self._now(), session_id))
+            return cur.rowcount
 
     def update_v2_phase(self, session_id, v2_phase):
         """Set the canonical v2 phase pointer (review #4).
