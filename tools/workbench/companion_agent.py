@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from companion_tools import execute_tool
 from app_secrets import anthropic_api_key
-from phase_cluster_router import persona_for_phase
+from phase_cluster_router import persona_for_phase, persona_for_v2_phase
 from persona_tools import tool_defs_for_persona
 
 
@@ -209,7 +209,12 @@ def stream_study_response(session_id, user_message, db, analytics=None,
     # pastor_feedback + session_decisions live on the app module; import
     # lazily so tests that don't initialize the app still work.
     from agent_data_provider import context_for_persona
-    persona = persona_for_phase(session['current_phase'])
+    # v2_phase wins when set (review #4 picker); else fall back to legacy
+    # current_phase routing for sessions created before the picker landed.
+    from v2_phases import resolve_v2_phase
+    v2_phase_row = resolve_v2_phase(session.get('v2_phase'),
+                                    session.get('current_phase'))
+    persona = persona_for_v2_phase(v2_phase_row.key)
     try:
         from app import pastor_feedback as _pf, session_decisions as _sd
     except ImportError:
@@ -222,7 +227,7 @@ def stream_study_response(session_id, user_message, db, analytics=None,
         passage=session['passage_ref'],
         genre=session['genre'],
         session_elapsed_seconds=session['total_elapsed_seconds'],
-        current_phase=session['current_phase'],
+        current_phase=v2_phase_row.key,
         outline_summary=outline_summary,
         card_work_summary=card_work_summary,
         coaching_context=coaching_context,

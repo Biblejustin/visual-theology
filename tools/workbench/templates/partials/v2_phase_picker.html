@@ -1,0 +1,87 @@
+{% if v2_phases_grouped %}
+<style>
+.v2-phase-picker {
+  position: sticky;
+  top: 50px;
+  z-index: 90;
+  background: #15151c;
+  border-bottom: 1px solid #2a2a35;
+  font-size: 13px;
+  padding: 6px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.v2-phase-picker label { color: #888; font-weight: 500; }
+.v2-phase-picker select {
+  background: #1d1d27;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+  min-width: 260px;
+}
+.v2-phase-picker .persona-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.v2-phase-picker .persona-silent    { background: #2a2a35; color: #888; }
+.v2-phase-picker .persona-research  { background: #1e3a4a; color: #a8d8ea; }
+.v2-phase-picker .persona-composing { background: #3a2e1e; color: #f4d4a8; }
+.v2-phase-picker .persona-editing   { background: #3a1e1e; color: #f4a8a8; }
+.v2-phase-picker .status { font-size: 12px; color: #666; margin-left: auto; }
+</style>
+<div class="v2-phase-picker">
+  <label for="v2-phase-select">Phase:</label>
+  <select id="v2-phase-select" data-session-id="{{ session.id }}"
+          aria-label="Which v2 phase are you in right now?">
+    {% for persona, phases in v2_phases_grouped.items() %}
+      {% if phases %}
+      <optgroup label="{{ persona|capitalize }}">
+        {% for p in phases %}
+        <option value="{{ p.key }}"
+                {% if p.key == v2_phase_current %}selected{% endif %}>
+          {{ p.number }}. {{ p.name }}
+        </option>
+        {% endfor %}
+      </optgroup>
+      {% endif %}
+    {% endfor %}
+  </select>
+  <span class="persona-badge persona-{{ v2_phase_persona }}">{{ v2_phase_persona }}</span>
+  <span class="status" id="v2-phase-status"></span>
+</div>
+<script>
+(function() {
+  const sel = document.getElementById('v2-phase-select');
+  const status = document.getElementById('v2-phase-status');
+  if (!sel) return;
+  sel.addEventListener('change', async (e) => {
+    const phase = e.target.value;
+    status.textContent = 'saving…';
+    try {
+      const r = await fetch(`/study/session/${sel.dataset.sessionId}/v2-phase`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({v2_phase: phase}),
+      });
+      if (r.ok) {
+        status.textContent = 'saved';
+        setTimeout(() => location.reload(), 400);
+      } else if (r.status === 423) {
+        status.textContent = 'read-only (cutoff active)';
+      } else {
+        status.textContent = `error ${r.status}`;
+      }
+    } catch (err) {
+      status.textContent = 'network error';
+    }
+  });
+})();
+</script>
+{% endif %}

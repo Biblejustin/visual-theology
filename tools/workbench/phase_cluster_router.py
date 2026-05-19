@@ -66,3 +66,16 @@ def persona_for_phase(phase):
     if not phase:
         return DEFAULT_PERSONA
     return PHASE_PERSONA.get(phase, DEFAULT_PERSONA)
+
+
+def persona_for_v2_phase(v2_key):
+    """Return the persona for a canonical v2 phase key (e.g. 'p06_context').
+    Source of truth is v2_phases.V2_PHASES; this is a thin wrapper.
+
+    Unknown keys fall back to DEFAULT_PERSONA so a stale picker value
+    doesn't accidentally silence the AI."""
+    if not v2_key:
+        return DEFAULT_PERSONA
+    from v2_phases import get_phase
+    p = get_phase(v2_key)
+    return p.persona if p else DEFAULT_PERSONA

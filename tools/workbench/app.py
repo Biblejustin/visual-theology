@@ -273,6 +273,35 @@ def inject_globals():
     return {"phases": PHASES}
 
 
+@app.context_processor
+def inject_v2_phase_picker():
+    """Surface v2-phase metadata + the current session's v2_phase to
+    every /study/session/<id> render so the picker partial can render
+    without each render call threading the kwargs. Returns {} on pages
+    that aren't a session view."""
+    # The picker only shows on session views — the partial checks for
+    # v2_phases_grouped truthiness. Cheapest gate: only build the dict
+    # when we know we're rendering a session page (the route handler
+    # sets request.view_args['session_id']).
+    if not request or not getattr(request, 'view_args', None):
+        return {}
+    sid = request.view_args.get('session_id')
+    if not sid or not companion_db:
+        return {}
+    if not request.path.startswith(f'/study/session/{sid}'):
+        return {}
+    from v2_phases import phases_by_persona, resolve_v2_phase
+    sess = companion_db.get_session(sid)
+    if not sess:
+        return {}
+    current = resolve_v2_phase(sess.get('v2_phase'), sess.get('current_phase'))
+    return {
+        'v2_phases_grouped': phases_by_persona(),
+        'v2_phase_current': current.key,
+        'v2_phase_persona': current.persona,
+    }
+
+
 def _is_sermon_work_page_load(req):
     """True for full GET page loads of sermon-work surfaces (not HTMX fragments)."""
     if req.method != "GET":
@@ -338,6 +367,7 @@ _CUTOFF_BLOCKED_PATH_PATTERNS = (
     re.compile(r'^/study/session/\d+/split(/propose)?$'),
     re.compile(r'^/study/session/\d+/decisions/(set|clear)$'),
     re.compile(r'^/study/session/\d+/delete$'),
+    re.compile(r'^/study/session/\d+/v2-phase$'),
 )
 
 
@@ -864,6 +894,32 @@ def study_session_view(session_id):
                                series_members=series_members,
                                parent_session=parent_session,
                                is_child=is_child)
+
+
+@app.route("/study/session/<int:session_id>/v2-phase", methods=["POST"])
+def study_set_v2_phase(session_id):
+    """Set the session's canonical v2 phase (review #4 picker target).
+
+    Validates the key against v2_phases.V2_PHASE_KEYS so a stale UI
+    can't write garbage. 404 on missing session, 400 on bad key.
+    """
+    _, err = require_session(companion_db, session_id)
+    if err: return err
+    data, err = json_body()
+    if err: return err
+    from v2_phases import V2_PHASE_KEYS, get_phase
+    v2_key, err = require_string(data, 'v2_phase', min_length=1)
+    if err: return err
+    if v2_key not in V2_PHASE_KEYS:
+        return jsonify({'error': 'unknown v2_phase', 'valid_keys': list(V2_PHASE_KEYS)}), 400
+    rowcount = companion_db.update_v2_phase(session_id, v2_key)
+    if not rowcount:
+        return jsonify({'error': 'session not found'}), 404
+    return jsonify({
+        'ok': True,
+        'v2_phase': v2_key,
+        'persona': get_phase(v2_key).persona,
+    })
 
 
 @app.route("/study/session/<int:session_id>/discuss", methods=["POST"])

@@ -355,6 +355,12 @@ class CompanionDB:
             conn.execute("ALTER TABLE sessions ADD COLUMN series_position INTEGER")
         if 'series_title' not in existing_session_cols:
             conn.execute("ALTER TABLE sessions ADD COLUMN series_title TEXT")
+        # v2 16-phase model (review #4): explicit canonical phase pointer
+        # alongside the legacy current_phase. Backfill from current_phase
+        # via v2_phases._LEGACY_TO_V2 on read; nothing to do at schema
+        # time except create the column.
+        if 'v2_phase' not in existing_session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN v2_phase TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)")
         # Homiletics engine: insight storage + claim embeddings + outline tag cache
         conn.executescript("""
@@ -728,6 +734,20 @@ class CompanionDB:
                                    timer_paused = 0, updated_at = ?
                 WHERE id = ?
             """, (phase, timer_seconds, self._now(), session_id))
+
+    def update_v2_phase(self, session_id, v2_phase):
+        """Set the canonical v2 phase pointer (review #4).
+
+        Returns affected row count so callers can detect missing
+        session_id (returns 0). Caller is responsible for validating
+        that v2_phase is a known key; we don't gate that here so
+        backfill scripts can write whatever the v2_phases module knows.
+        """
+        with self._safe_write() as conn:
+            cur = conn.execute(
+                "UPDATE sessions SET v2_phase = ?, updated_at = ? WHERE id = ?",
+                (v2_phase, self._now(), session_id))
+            return cur.rowcount
 
     def save_card_response(self, session_id, phase, question_id, content):
         now = self._now()
