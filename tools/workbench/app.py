@@ -45,20 +45,18 @@ if os.path.isdir(_DEPS) and _DEPS not in sys.path:
     sys.path.insert(0, _DEPS)
 
 import sqlite3
-from functools import wraps
-from flask import Flask, Response, render_template, request, jsonify, redirect, url_for, session, make_response, Blueprint, abort
+from flask import Flask, Response, render_template, request, jsonify, redirect, url_for, session, abort
 
 import workbench_db as db
-from workbench_agent import stream_agent_response, PHASES
+from workbench_agent import PHASES
 from study import (
     init_batch_reader, shutdown_batch_reader, parse_reference,
-    find_bibles, find_commentaries_for_ref, find_lexicons,
-    read_bible_chapter, extract_verses, clean_bible_text, read_annotations,
-    get_interlinear_for_chapter, run_reader, read_article_text,
-    resolve_bible_files, find_study_bible_notes, CATALOG_DB, RESOURCE_MGR_DB,
+    read_bible_chapter, extract_verses,
+    read_article_text,
+    resolve_bible_files, find_study_bible_notes,
 )
-from companion_db import CompanionDB, PHASES_ORDER, PHASE_TIMERS
-from companion_agent import build_study_prompt, stream_study_response
+from companion_db import CompanionDB
+from companion_agent import stream_study_response
 from session_analytics import SessionAnalytics
 from accuser_detector import AccuserDetector
 from mentor_reference_store import MentorReferenceStore
@@ -80,10 +78,10 @@ _DECISION_LABEL_MAP = {
 from genre_map import get_genre
 from seed_questions import seed_question_bank
 from series_planner import propose_series_plan
-from app_secrets import sermonaudio_api_key, sermonaudio_broadcaster_id, anthropic_api_key
+from app_secrets import anthropic_api_key
 from validators import (
     parse_int_arg, json_body, require_string, require_int,
-    require_list_of_strings, require_session,
+    require_session,
 )
 
 try:
