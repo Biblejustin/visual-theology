@@ -95,20 +95,28 @@ _scheduler = None
 
 
 def _scheduled_sermon_sync():
-    """The 4h cron body. Sync → match → analyze."""
+    """The 4h cron body. Sync → match → analyze.
+
+    _make_sermonaudio_client + _broadcaster_id moved to bp_sermons during
+    the polish #5b blueprint extraction. Import them lazily here so the
+    cron task uses the same factory the live /sermons/sync route uses
+    (matters for tests that monkeypatch bp_sermons._make_sermonaudio_client).
+    """
     try:
         from sermonaudio_sync import run_sync
         from sermon_matcher import dispatch_matching
         from sermon_analyzer import dispatch_pending_analyses
         from llm_client import AnthropicClient
+        import bp_sermons
         db = get_db()
-        run_sync(db, client=_make_sermonaudio_client(),
-                 broadcaster_id=_broadcaster_id(), trigger='cron')
+        run_sync(db, client=bp_sermons._make_sermonaudio_client(),
+                 broadcaster_id=bp_sermons._broadcaster_id(), trigger='cron')
         dispatch_matching(db)
         client = AnthropicClient(api_key=anthropic_api_key())
         dispatch_pending_analyses(db, llm_client=client)
     except Exception as e:
         app.logger.error(f'Scheduled sermon sync failed: {e}')
+        raise
 
 
 def get_scheduler():
@@ -421,9 +429,16 @@ def api_set_session_decision(session_id):
     explicit commits give the Composing Partner real signal."""
     if not session_decisions:
         abort(503)
+    # Accept either JSON or form. silent=True so the JSON parse never
+    # 415s; fall back to form if the body wasn't JSON.
     data = request.get_json(silent=True) or request.form
-    key = (data.get("key") or "").strip()
-    value = (data.get("value") or "").strip()
+    # Coerce + validate without crashing on typed values like {"key": 1}.
+    key_raw = data.get("key") or ""
+    value_raw = data.get("value") or ""
+    if not isinstance(key_raw, str) or not isinstance(value_raw, str):
+        return jsonify({"error": "key and value must be strings"}), 400
+    key = key_raw.strip()
+    value = value_raw.strip()
     if not key or not value:
         return jsonify({"error": "key and value required"}), 400
     try:

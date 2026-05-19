@@ -11,8 +11,18 @@ _SERVICE = "logos4"
 
 
 def get_secret(name: str, env_var: str = None) -> str:
+    """Look up a secret. Keychain first, env var fallback.
+
+    Keychain access raises in headless contexts (PM2 daemon, CI, SSH
+    sessions without a user keychain unlocked). Catch the failure so
+    the env-var fallback still runs — otherwise a missing/locked
+    keychain 500s every secret-using route on the live server.
+    """
     if _kr is not None:
-        value = _kr.get_password(_SERVICE, name)
+        try:
+            value = _kr.get_password(_SERVICE, name)
+        except Exception:
+            value = None
         if value:
             return value
     if env_var:

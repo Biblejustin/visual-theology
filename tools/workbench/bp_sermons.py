@@ -230,21 +230,30 @@ def sermon_backfill_srt():
 
 @sermons_bp.route('/<int:sermon_id>/reanalyze', methods=['POST'])
 def sermon_reanalyze(sermon_id):
+    """Re-run sermon analysis. 404 BEFORE touching secrets/clients —
+    nonexistent IDs shouldn't surface unrelated secret/client errors."""
     from sermon_analyzer import analyze_sermon
     from llm_client import AnthropicClient
     db = get_db()
-    api_key = anthropic_api_key()
-    client = AnthropicClient(api_key=api_key)
     conn = db._conn()
-    updated = conn.execute(
-        "UPDATE sermons SET sync_status = 'analysis_pending', last_state_change_at = datetime('now') "
-        "WHERE id = ? AND sync_status NOT IN ('analysis_pending', 'analysis_running')",
-        (sermon_id,),
-    ).rowcount
-    conn.commit()
-    conn.close()
+    try:
+        exists = conn.execute(
+            "SELECT 1 FROM sermons WHERE id = ?", (sermon_id,)
+        ).fetchone()
+        if not exists:
+            return jsonify({'error': 'sermon not found'}), 404
+        updated = conn.execute(
+            "UPDATE sermons SET sync_status = 'analysis_pending', last_state_change_at = datetime('now') "
+            "WHERE id = ? AND sync_status NOT IN ('analysis_pending', 'analysis_running')",
+            (sermon_id,),
+        ).rowcount
+        conn.commit()
+    finally:
+        conn.close()
     if not updated:
         return jsonify({'error': 'analysis already pending or running'}), 409
+    # Secrets + client only after we've confirmed the work is real.
+    client = AnthropicClient(api_key=anthropic_api_key())
     result = analyze_sermon(db, sermon_id, llm_client=client)
     return jsonify(result)
 
