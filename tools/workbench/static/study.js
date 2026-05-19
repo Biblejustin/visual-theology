@@ -17,11 +17,13 @@ var studyClock = {
 
     // Activity / visibility tracking (task #53 timer fix).
     lastActivityAt: 0,
+    lastTickAt: 0,                           // wall-clock at the most recent tick
     autoPausedAt: 0,
     autoPausedReason: null,
     autoPausedElapsedSnapshot: 0,
     IDLE_THRESHOLD_MS: 5 * 60 * 1000,
     TAB_HIDDEN_THRESHOLD_MS: 30 * 1000,
+    TICK_GAP_THRESHOLD_MS: 60 * 1000,        // > 60s between ticks = suspension
     GAP_NOTICE_MIN_SEC: 60,
     _listenersBound: false,
 
@@ -29,15 +31,36 @@ var studyClock = {
         this.elapsed = initialElapsed || 0;
         this.startTime = Date.now() - (this.elapsed * 1000);
         this.lastActivityAt = Date.now();
+        this.lastTickAt = Date.now();
         this._bindActivityListeners();
         if (this.interval) return;
         var self = this;
         this.interval = setInterval(function() {
-            if (!self.paused) {
-                self.elapsed = Math.floor((Date.now() - self.startTime) / 1000);
+            var now = Date.now();
+            // Tick-gap defense (task #72). The browser is supposed to fire
+            // this interval every ~1s. If it fired more than 60s late, the
+            // tab / system was suspended (laptop sleep, aggressive tab
+            // throttling). The naive elapsed recompute below would inflate
+            // by the full suspension duration. Rebase startTime so elapsed
+            // stays at the snapshot we had pre-suspension, then auto-pause
+            // so the gap notice can offer 'count it' if Bryan was actually
+            // working in another app.
+            if (self.lastTickAt && (now - self.lastTickAt) > self.TICK_GAP_THRESHOLD_MS) {
+                self.startTime = now - (self.elapsed * 1000);
+                self.lastActivityAt = self.lastTickAt;  // pre-suspension anchor for gap-notice math
+                if (!self.paused) {
+                    self.autoPausedAt = self.lastTickAt;
+                    self.autoPausedElapsedSnapshot = self.elapsed;
+                    self.autoPausedReason = 'tick_gap';
+                    self.paused = true;
+                    self.syncToServer();
+                }
+            } else if (!self.paused) {
+                self.elapsed = Math.floor((now - self.startTime) / 1000);
                 self.checkWellbeing();
                 self._checkIdle();
             }
+            self.lastTickAt = now;
             self.updateDisplay();
         }, 1000);
         this.updateDisplay();
@@ -45,7 +68,9 @@ var studyClock = {
 
     _noteActivity: function() {
         this.lastActivityAt = Date.now();
-        if (this.autoPausedReason === 'idle' && this.paused) {
+        // Either kind of pause (idle OR system-suspend) auto-resumes on touch.
+        if (this.paused &&
+            (this.autoPausedReason === 'idle' || this.autoPausedReason === 'tick_gap')) {
             this._autoResume();
         }
     },
@@ -115,6 +140,7 @@ var studyClock = {
         this.startTime = Date.now() - (this.elapsed * 1000);
         this.paused = false;
         this.lastActivityAt = Date.now();
+        this.lastTickAt = Date.now();
         this.updateDisplay();
         if (gapSec >= this.GAP_NOTICE_MIN_SEC) {
             showGapNotice(reason, gapSec, this);
@@ -136,6 +162,7 @@ var studyClock = {
             this.startTime = Date.now() - (this.elapsed * 1000);
             this.paused = false;
             this.lastActivityAt = Date.now();
+            this.lastTickAt = Date.now();
         } else {
             this.paused = true;
         }
@@ -149,6 +176,7 @@ var studyClock = {
             if (this.paused) {
                 if (this.autoPausedReason === 'tab_hidden') text += ' (auto-paused: tab hidden)';
                 else if (this.autoPausedReason === 'idle') text += ' (auto-paused: idle)';
+                else if (this.autoPausedReason === 'tick_gap') text += ' (auto-paused: tab suspended)';
                 else text += ' (paused)';
             }
             el.textContent = text;
@@ -197,7 +225,10 @@ function showGapNotice(reason, gapSec, clock) {
     var existing = document.getElementById('gap-notice');
     if (existing) existing.remove();
     var minutes = Math.round(gapSec / 60);
-    var label = reason === 'tab_hidden' ? 'tab was hidden' : 'you were idle';
+    var label;
+    if (reason === 'tab_hidden')      label = 'tab was hidden';
+    else if (reason === 'tick_gap')   label = 'tab was suspended (laptop sleep?)';
+    else                              label = 'you were idle';
     var notice = document.createElement('div');
     notice.id = 'gap-notice';
     notice.setAttribute('role', 'status');
