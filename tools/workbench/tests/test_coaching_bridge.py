@@ -214,12 +214,14 @@ def test_build_coaching_prompt_section_empty_when_no_data(fresh_db):
     assert section == ''
 
 
-# ── build_study_prompt coaching_context tests ────────────────────────
+# ── Research Partner coaching_context tests ──────────────────────────
+# (These used to test build_study_prompt; production now uses
+# build_research_partner_prompt via select_persona_prompt → persona_for_phase.)
 
-from companion_agent import build_study_prompt
+from persona_prompts import build_research_partner_prompt
 
-def test_build_study_prompt_includes_coaching_section():
-    prompt = build_study_prompt(
+def test_research_prompt_includes_coaching_section():
+    prompt = build_research_partner_prompt(
         passage='Romans 8:1-11', genre='epistle',
         session_elapsed_seconds=3600,
         coaching_context='## Coaching Memory\n\nDimension: application_specificity',
@@ -227,8 +229,8 @@ def test_build_study_prompt_includes_coaching_section():
     assert 'Coaching Memory' in prompt
     assert 'application_specificity' in prompt
 
-def test_build_study_prompt_omits_coaching_when_empty():
-    prompt = build_study_prompt(
+def test_research_prompt_omits_coaching_when_empty():
+    prompt = build_research_partner_prompt(
         passage='Romans 8:1-11', genre='epistle',
         session_elapsed_seconds=3600,
         coaching_context='',

@@ -13,7 +13,7 @@ from coaching_bridge import (
     build_coaching_prompt_section, record_coaching_exposure,
     check_coaching_exposure,
 )
-from companion_agent import build_study_prompt
+from persona_prompts import build_research_partner_prompt
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -66,8 +66,10 @@ def test_full_bridge_flow(db):
     insights = load_coaching_insights(db)
     coaching_section = build_coaching_prompt_section(commitment, insights)
 
-    # 5. Build the study prompt with coaching context
-    prompt = build_study_prompt(
+    # 5. Build the research-partner prompt with coaching context
+    # (production path: select_persona_prompt → build_research_partner_prompt
+    # when persona_for_phase resolves to 'research')
+    prompt = build_research_partner_prompt(
         passage='Romans 3:1-8', genre='epistle',
         session_elapsed_seconds=5400,
         coaching_context=coaching_section,
@@ -96,7 +98,7 @@ def test_full_bridge_flow(db):
 
 
 def test_bridge_degrades_gracefully_with_no_coaching_data(db):
-    prompt = build_study_prompt(
+    prompt = build_research_partner_prompt(
         passage='Genesis 1:1-5', genre='narrative',
         session_elapsed_seconds=1800,
         coaching_context='',
