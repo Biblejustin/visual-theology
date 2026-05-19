@@ -1796,9 +1796,18 @@ def study_outline(session_id):
 @app.route("/study/session/<int:session_id>/outline/add", methods=["POST"])
 def study_outline_add(session_id):
     """Add a node to the outline."""
+    # Bug review #4: 404 for missing session (avoids FK 500 in the helper).
+    if not companion_db.get_session(session_id):
+        return jsonify({"error": "session not found"}), 404
     data = request.get_json(silent=True) or {}
-    content = data.get("content", "").strip()
+    # Bug review #6: content must be a string. {"content": 12}.strip() crashed.
+    content = data.get("content", "")
+    if not isinstance(content, str):
+        return jsonify({"error": "content must be a string"}), 400
+    content = content.strip()
     node_type = data.get("node_type", "note")
+    if not isinstance(node_type, str):
+        return jsonify({"error": "node_type must be a string"}), 400
 
     if content:
         node_id = companion_db.add_outline_node(
