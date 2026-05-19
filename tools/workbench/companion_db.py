@@ -822,34 +822,51 @@ class CompanionDB:
         return roots
 
     def update_outline_node(self, node_id, content=None, node_type=None, rank=None, flags=None):
+        """Returns affected row count so callers can detect missing-id no-ops."""
         conn = self._conn()
-        updates = []
-        params = []
-        if content is not None:
-            updates.append("content = ?")
-            params.append(content)
-        if node_type is not None:
-            updates.append("type = ?")
-            params.append(node_type)
-        if rank is not None:
-            updates.append("rank = ?")
-            params.append(rank)
-        if flags is not None:
-            updates.append("flags = ?")
-            params.append(json.dumps(flags))
-        updates.append("updated_at = ?")
-        params.append(self._now())
-        params.append(node_id)
-        conn.execute(f"UPDATE outline_nodes SET {', '.join(updates)} WHERE id = ?", params)
-        conn.commit()
-        conn.close()
+        try:
+            updates = []
+            params = []
+            if content is not None:
+                updates.append("content = ?")
+                params.append(content)
+            if node_type is not None:
+                updates.append("type = ?")
+                params.append(node_type)
+            if rank is not None:
+                updates.append("rank = ?")
+                params.append(rank)
+            if flags is not None:
+                updates.append("flags = ?")
+                params.append(json.dumps(flags))
+            updates.append("updated_at = ?")
+            params.append(self._now())
+            params.append(node_id)
+            cur = conn.execute(
+                f"UPDATE outline_nodes SET {', '.join(updates)} WHERE id = ?", params)
+            conn.commit()
+            return cur.rowcount
+        except Exception:
+            try: conn.rollback()
+            except Exception: pass
+            raise
+        finally:
+            conn.close()
 
     def delete_outline_node(self, node_id):
+        """Returns affected row count for the node itself (children cascade)."""
         conn = self._conn()
-        conn.execute("DELETE FROM outline_nodes WHERE parent_id = ?", (node_id,))
-        conn.execute("DELETE FROM outline_nodes WHERE id = ?", (node_id,))
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute("DELETE FROM outline_nodes WHERE parent_id = ?", (node_id,))
+            cur = conn.execute("DELETE FROM outline_nodes WHERE id = ?", (node_id,))
+            conn.commit()
+            return cur.rowcount
+        except Exception:
+            try: conn.rollback()
+            except Exception: pass
+            raise
+        finally:
+            conn.close()
 
     def delete_session(self, session_id):
         conn = self._conn()

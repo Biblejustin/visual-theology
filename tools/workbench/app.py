@@ -1826,19 +1826,25 @@ def study_outline_add(session_id):
 def study_outline_update(session_id, node_id):
     """Update an outline node."""
     data = request.get_json(silent=True) or {}
-    companion_db.update_outline_node(
+    rowcount = companion_db.update_outline_node(
         node_id=node_id,
         content=data.get("content"),
         node_type=data.get("node_type"),
         rank=data.get("rank"),
     )
+    # Bug review #7: was reporting success on no-op (missing node_id).
+    if not rowcount:
+        return jsonify({"error": "outline node not found"}), 404
     return jsonify({"ok": True})
 
 
 @app.route("/study/session/<int:session_id>/outline/<int:node_id>", methods=["DELETE"])
 def study_outline_delete(session_id, node_id):
     """Delete an outline node."""
-    companion_db.delete_outline_node(node_id)
+    rowcount = companion_db.delete_outline_node(node_id)
+    # Bug review #7: was reporting success on no-op (missing node_id).
+    if not rowcount:
+        return jsonify({"error": "outline node not found"}), 404
     return jsonify({"ok": True})
 
 
