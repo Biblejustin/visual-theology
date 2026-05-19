@@ -270,15 +270,3 @@ def test_study_notepad_save(client):
     assert resp.status_code == 200
 
 
-# ── Companion routes still work ──────────────────────────────────────────
-
-def test_companion_index_still_works(client):
-    r = client.get('/companion/')
-    assert r.status_code == 200
-    assert b'Sermon Study Companion' in r.data
-
-
-def test_companion_session_still_works(client):
-    r = client.post('/companion/session/new', data={'passage': 'Romans 1:18-23'})
-    assert r.status_code == 302
-    assert '/companion/session/' in r.headers['Location']

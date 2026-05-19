@@ -60,37 +60,39 @@ Remaining routes migrate progressively as they're touched. HTML routes
 (redirects, not JSON) intentionally not migrated — `require_session`
 is JSON-shaped.
 
-## Pending (needs Bryan's input before proceeding)
+## Polish #5a — `/companion/` legacy DELETED ✓
 
-### Polish #5a — Decide `/companion/` legacy status
-The `/companion/` URL space holds the original card-based UI that
-predates `/study/`. Both run live in production. Questions:
+Bryan confirmed (2026-05-18) he never visits `/companion/`. Deleted:
+- 15 routes from app.py (~360 lines)
+- 4 page templates (companion_base/start/session/export.html)
+- 3 orphan partials (card/discussion/progress_dots.html)
+- 2 static assets (companion.css/.js)
+- 21 /companion/ tests in test_routes.py (kept 8 /study/ tests)
+- 2 /companion/ "still works" tests in test_study_routes.py
 
-- Is `/companion/` still used? (UI smoke check, traffic check)
-- If unused, when can it be removed? (One PR removes 8 routes +
-  templates + tests, ~400 lines)
-- If still used, should it move to its own blueprint? (`bp_companion`)
+Retained: `card_responses` table + `save_card_response` /
+`get_card_responses` helpers — /study/ and the persona agents
+still read them for prior-session context.
 
-### Polish #5b — Decide `app.py` blueprint split timing
-`app.py` is 2491 lines, 80+ routes. Natural blueprint boundaries:
+Tests: 926 passed, 22 skipped (was 948 — drop is the deleted
+companion tests). bp_companion is no longer needed in the split.
 
-| Blueprint | Routes | Approx. size |
-|-----------|--------|--------------|
-| `bp_auth` | /login, /logout, require_auth | ~100 lines |
-| `bp_workbench` | / and /api/projects (legacy workbench) | ~250 lines |
-| `bp_companion` | /companion/* | ~400 lines (if not removed first) |
-| `bp_study` | /study/* and /api/study/* | ~1100 lines |
-| `bp_sermons` | /sermons/* | ~400 lines |
-| `bp_passage` | /api/passage, /api/interlinear, /api/library/* | ~250 lines |
+## Polish #5b — `app.py` blueprint split (in progress)
 
-Done as a single PR this would touch every test that mounts the app.
-Done progressively (one blueprint per PR, smallest first) it's
-6 small PRs with stable tests between.
+Plan: 5 blueprints (down from 6 after /companion/ deletion), one
+PR each, smallest/safest first.
 
-**Recommendation:** progressive, starting with `bp_passage` (cleanest
-boundary, no shared state with other blueprints). But this is a
-multi-hour structural change — Bryan should decide whether to do it
-now or defer.
+| # | Blueprint | Routes | Status |
+|---|-----------|--------|--------|
+| 1 | `bp_passage` | /api/passage, /api/interlinear, /api/resource/*, /api/library/* | ✓ done (commit 513a642) |
+| 2 | `bp_auth` | /login, /logout, require_auth (before_app_request) | ✓ done (commit 45e64c1) |
+| 3 | `bp_workbench` | / + /api/projects/* (legacy workbench) | pending |
+| 4 | `bp_study` | /study/* + /api/study/* | pending |
+| 5 | `bp_sermons` | /sermons/* | already a blueprint |
+
+After #4 lands, `app.py` should be ~500 lines (setup + lifecycle +
+template helpers + blueprint registration) instead of the original
+2491.
 
 ## Not in scope (separate threads)
 

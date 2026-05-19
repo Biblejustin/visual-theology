@@ -40,9 +40,9 @@ def stack():
 
 def test_cutoff_summary_groups_by_type(stack):
     sa = stack['sa']
-    sa.log_cutoff_event('/companion/', 'daily_5pm')
     sa.log_cutoff_event('/study/', 'daily_5pm')
-    sa.log_cutoff_event('/companion/', 'friday_3pm')
+    sa.log_cutoff_event('/study/', 'daily_5pm')
+    sa.log_cutoff_event('/study/', 'friday_3pm')
     rows = cutoff_summary(sa, days=30)
     by_type = {r['cutoff_type']: r for r in rows}
     assert by_type['daily_5pm']['n'] == 2
@@ -51,7 +51,7 @@ def test_cutoff_summary_groups_by_type(stack):
 
 def test_cutoff_summary_counts_dismissed(stack):
     sa = stack['sa']
-    e1 = sa.log_cutoff_event('/companion/', 'daily_5pm')
+    e1 = sa.log_cutoff_event('/study/', 'daily_5pm')
     sa.log_cutoff_event('/study/', 'daily_5pm')
     sa.mark_cutoff_dismissed(e1)
     rows = cutoff_summary(sa, days=30)
@@ -66,7 +66,7 @@ def test_cutoff_summary_respects_days_window(stack):
     conn = sa._conn()
     conn.execute(
         "INSERT INTO cutoff_events (timestamp, route, cutoff_type, dismissed) "
-        "VALUES (?, '/companion/', 'daily_5pm', 0)",
+        "VALUES (?, '/study/', 'daily_5pm', 0)",
         (old_iso,))
     conn.commit()
     conn.close()
@@ -81,10 +81,10 @@ def test_cutoff_summary_empty_when_no_events(stack):
 
 def test_cutoff_recent_dismissed_rate_returns_fraction(stack):
     sa = stack['sa']
-    e1 = sa.log_cutoff_event('/companion/', 'daily_5pm')
+    e1 = sa.log_cutoff_event('/study/', 'daily_5pm')
     sa.log_cutoff_event('/study/', 'daily_5pm')
-    sa.log_cutoff_event('/companion/', 'friday_3pm')
-    sa.log_cutoff_event('/companion/', 'weekend_lockout')
+    sa.log_cutoff_event('/study/', 'friday_3pm')
+    sa.log_cutoff_event('/study/', 'weekend_lockout')
     sa.mark_cutoff_dismissed(e1)
     rate = cutoff_recent_dismissed_rate(sa, days=30)
     assert 0.0 < rate < 1.0

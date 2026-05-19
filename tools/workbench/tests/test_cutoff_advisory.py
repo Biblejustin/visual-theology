@@ -187,7 +187,7 @@ def test_cutoff_events_table_created_by_init_db(sa):
 # ── DB helpers ──────────────────────────────────────────────────────────────
 
 def test_log_cutoff_event_inserts_row_with_session(sa):
-    event_id = sa.log_cutoff_event('/companion/session/5', 'daily_5pm', session_id=5)
+    event_id = sa.log_cutoff_event('/study/session/5', 'daily_5pm', session_id=5)
     assert event_id > 0
     conn = sa._conn()
     row = conn.execute(
@@ -195,7 +195,7 @@ def test_log_cutoff_event_inserts_row_with_session(sa):
         (event_id,)
     ).fetchone()
     conn.close()
-    assert row['route'] == '/companion/session/5'
+    assert row['route'] == '/study/session/5'
     assert row['cutoff_type'] == 'daily_5pm'
     assert row['session_id'] == 5
     assert row['dismissed'] == 0
@@ -214,7 +214,7 @@ def test_log_cutoff_event_inserts_row_without_session(sa):
 
 
 def test_mark_cutoff_dismissed_updates_row(sa):
-    event_id = sa.log_cutoff_event('/companion/', 'daily_5pm')
+    event_id = sa.log_cutoff_event('/study/', 'daily_5pm')
     sa.mark_cutoff_dismissed(event_id)
     conn = sa._conn()
     row = conn.execute(
@@ -233,8 +233,8 @@ def test_get_recent_cutoff_event_returns_recent_match(sa):
 
 
 def test_get_recent_cutoff_event_filters_by_route(sa):
-    sa.log_cutoff_event('/companion/', 'daily_5pm')
-    assert sa.get_recent_cutoff_event('/study/', within_minutes=15) is None
+    sa.log_cutoff_event('/study/', 'daily_5pm')
+    assert sa.get_recent_cutoff_event('/sermons/', within_minutes=15) is None
 
 
 def test_get_recent_cutoff_event_excludes_old_events(sa):
@@ -243,17 +243,17 @@ def test_get_recent_cutoff_event_excludes_old_events(sa):
     conn.execute(
         "INSERT INTO cutoff_events (timestamp, route, cutoff_type, dismissed) "
         "VALUES (?, ?, ?, 0)",
-        (old_iso, '/companion/', 'daily_5pm')
+        (old_iso, '/study/', 'daily_5pm')
     )
     conn.commit()
     conn.close()
-    assert sa.get_recent_cutoff_event('/companion/', within_minutes=15) is None
+    assert sa.get_recent_cutoff_event('/study/', within_minutes=15) is None
 
 
 def test_get_recent_cutoff_event_returns_dismissed_state(sa):
-    event_id = sa.log_cutoff_event('/companion/', 'daily_5pm')
+    event_id = sa.log_cutoff_event('/study/', 'daily_5pm')
     sa.mark_cutoff_dismissed(event_id)
-    recent = sa.get_recent_cutoff_event('/companion/', within_minutes=15)
+    recent = sa.get_recent_cutoff_event('/study/', within_minutes=15)
     assert recent is not None
     assert recent['dismissed'] == 1
 
@@ -279,31 +279,34 @@ def client():
     os.unlink(tmp.name)
 
 
-def _make_companion_session(c, passage='Romans 1:18-23'):
-    r = c.post('/companion/session/new', data={'passage': passage})
+def _make_study_session(c, passage='Romans 1:18-23'):
+    r = c.post('/study/session/new', data={'passage': passage})
     loc = r.headers.get('Location', '')
     return int(loc.rstrip('/').split('/')[-1])
 
 
-def test_companion_session_past_cutoff_logs_event(client, monkeypatch):
+def test_study_session_past_cutoff_logs_event(client, monkeypatch):
     c, sa = client
     monkeypatch.setattr(sa, 'active_cutoff_type', lambda now_utc=None, tz=None: 'daily_5pm')
-    sid = _make_companion_session(c)
-    r = c.get(f'/companion/session/{sid}')
+    sid = _make_study_session(c)
+    r = c.get(f'/study/session/{sid}')
     assert r.status_code == 200
     conn = sa._conn()
     events = conn.execute("SELECT * FROM cutoff_events").fetchall()
     conn.close()
+    # The make_session POST already drove a /study/ page load (the redirect
+    # itself doesn't log, but the test_client follow=False so only the GET
+    # logs). Expect 1 event with the session-page route.
     assert len(events) == 1
     assert events[0]['cutoff_type'] == 'daily_5pm'
-    assert events[0]['route'] == f'/companion/session/{sid}'
+    assert events[0]['route'] == f'/study/session/{sid}'
 
 
-def test_companion_session_before_cutoff_does_not_log(client, monkeypatch):
+def test_study_session_before_cutoff_does_not_log(client, monkeypatch):
     c, sa = client
     monkeypatch.setattr(sa, 'active_cutoff_type', lambda now_utc=None, tz=None: None)
-    sid = _make_companion_session(c)
-    c.get(f'/companion/session/{sid}')
+    sid = _make_study_session(c)
+    c.get(f'/study/session/{sid}')
     conn = sa._conn()
     events = conn.execute("SELECT * FROM cutoff_events").fetchall()
     conn.close()
@@ -335,14 +338,14 @@ def test_non_sermon_route_does_not_log(client, monkeypatch):
 def test_htmx_fragment_request_does_not_log(client, monkeypatch):
     c, sa = client
     monkeypatch.setattr(sa, 'active_cutoff_type', lambda now_utc=None, tz=None: 'daily_5pm')
-    sid = _make_companion_session(c)
+    sid = _make_study_session(c)
     # Drain any event from the page-load make_session itself
     conn = sa._conn()
     conn.execute("DELETE FROM cutoff_events")
     conn.commit()
     conn.close()
     # HX-Request header means this is an HTMX fragment, not a full page load
-    c.get(f'/companion/session/{sid}/card', headers={'HX-Request': 'true'})
+    c.get(f'/study/session/{sid}', headers={'HX-Request': 'true'})
     conn = sa._conn()
     events = conn.execute("SELECT * FROM cutoff_events").fetchall()
     conn.close()
@@ -352,13 +355,13 @@ def test_htmx_fragment_request_does_not_log(client, monkeypatch):
 def test_throttle_prevents_duplicate_logs_within_window(client, monkeypatch):
     c, sa = client
     monkeypatch.setattr(sa, 'active_cutoff_type', lambda now_utc=None, tz=None: 'daily_5pm')
-    sid = _make_companion_session(c)
-    c.get(f'/companion/session/{sid}')
-    c.get(f'/companion/session/{sid}')
+    sid = _make_study_session(c)
+    c.get(f'/study/session/{sid}')
+    c.get(f'/study/session/{sid}')
     conn = sa._conn()
     events = conn.execute(
         "SELECT * FROM cutoff_events WHERE route = ?",
-        (f'/companion/session/{sid}',)
+        (f'/study/session/{sid}',)
     ).fetchall()
     conn.close()
     assert len(events) == 1
@@ -366,7 +369,7 @@ def test_throttle_prevents_duplicate_logs_within_window(client, monkeypatch):
 
 def test_dismiss_endpoint_marks_event(client):
     c, sa = client
-    event_id = sa.log_cutoff_event('/companion/', 'daily_5pm')
+    event_id = sa.log_cutoff_event('/study/', 'daily_5pm')
     r = c.post(f'/api/cutoff-events/{event_id}/dismiss')
     assert r.status_code in (200, 204)
     conn = sa._conn()

@@ -66,3 +66,7 @@ daniel/
 # LogosSearcher build artifacts
 tools/LogosSearcher/bin/
 tools/LogosSearcher/obj/
+
+# Ad-hoc DB backups (suffixes don't match *.db so add explicit pattern)
+*.db.*-bak
+*.db.bak*
