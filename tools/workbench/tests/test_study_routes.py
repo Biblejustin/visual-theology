@@ -20,20 +20,17 @@ import pytest
 
 @pytest.fixture
 def client():
-    """Create Flask test client with temp DBs."""
+    """Create Flask test client with temp DBs.
+
+    Per bug review #7-#8: initializes ALL module-global stores via the
+    shared init_all_app_globals helper.
+    """
     import app as app_module
+    from conftest import init_all_app_globals
 
     tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
     tmp.close()
-    cdb = CompanionDB(tmp.name)
-    cdb.init_db()
-    seed_question_bank(cdb)
-
-    sa = SessionAnalytics(tmp.name)
-    sa.init_db()
-
-    app_module.companion_db = cdb
-    app_module.study_analytics = sa
+    init_all_app_globals(tmp.name)
     app_module.app.config['TESTING'] = True
 
     with app_module.app.test_client() as c:

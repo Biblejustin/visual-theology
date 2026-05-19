@@ -105,6 +105,73 @@ def base_url():
         pass
 
 
+def init_all_app_globals(db_path):
+    """Initialize every module-global store the Flask app uses, all pointing
+    at the same temp DB, with init_db() called on each.
+
+    Per bug review #7-#8: test fixtures that only set companion_db /
+    study_analytics leave session_decisions / pastor_feedback /
+    accuser_detector / mentor_store pointing at stale or uninitialized
+    DBs. Subsequent requests crashed with 'no such table' on whichever
+    store the route happened to touch.
+
+    Use from a pytest fixture:
+
+        @pytest.fixture
+        def client():
+            import app as app_module
+            tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+            tmp.close()
+            init_all_app_globals(tmp.name)
+            app_module.app.config['TESTING'] = True
+            with app_module.app.test_client() as c:
+                yield c
+            os.unlink(tmp.name)
+    """
+    import app as app_module
+    from companion_db import CompanionDB
+    from session_analytics import SessionAnalytics
+    from accuser_detector import AccuserDetector
+    from mentor_reference_store import MentorReferenceStore
+    from pastor_feedback_store import PastorFeedbackStore
+    from session_decisions import SessionDecisionStore
+    from seed_questions import seed_question_bank
+
+    cdb = CompanionDB(db_path)
+    cdb.init_db()
+    seed_question_bank(cdb)
+
+    analytics = SessionAnalytics(db_path)
+    analytics.init_db()
+
+    accuser = AccuserDetector(db_path)
+    accuser.init_db()
+
+    mentor = MentorReferenceStore(db_path)
+    mentor.init_db()
+
+    feedback = PastorFeedbackStore(db_path)
+    feedback.init_db()
+
+    decisions = SessionDecisionStore(db_path)
+    decisions.init_db()
+
+    app_module.companion_db = cdb
+    app_module.study_analytics = analytics
+    app_module.accuser_detector = accuser
+    app_module.mentor_store = mentor
+    app_module.pastor_feedback = feedback
+    app_module.session_decisions = decisions
+    return {
+        'companion_db': cdb,
+        'study_analytics': analytics,
+        'accuser_detector': accuser,
+        'mentor_store': mentor,
+        'pastor_feedback': feedback,
+        'session_decisions': decisions,
+    }
+
+
 def _require_base_url(base_url):
     """Helper: skip the calling test cleanly when the live dev server is
     holding port 5111 (in which case base_url yielded None). Without this

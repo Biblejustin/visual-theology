@@ -21,26 +21,19 @@ import pytest
 
 @pytest.fixture
 def client():
-    """Create Flask test client with a temp companion DB (no LogosReader needed)."""
-    import app as app_module
-    from session_analytics import SessionAnalytics
+    """Create Flask test client with a temp companion DB.
 
-    # Create temp DB
+    Per bug review #7-#8: initializes ALL module-global stores via the
+    shared init_all_app_globals helper so routes that touch session_decisions
+    / pastor_feedback / accuser_detector / mentor_store don't crash with
+    'no such table' from a stale or partial app-module state.
+    """
+    import app as app_module
+    from conftest import init_all_app_globals
+
     tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
     tmp.close()
-    cdb = CompanionDB(tmp.name)
-    cdb.init_db()
-    seed_question_bank(cdb)
-
-    # Also init SessionAnalytics on the same DB so the cutoff-banner context
-    # processor doesn't hit a missing-table error when these tests render
-    # sermon-work pages past a cutoff time.
-    analytics = SessionAnalytics(tmp.name)
-    analytics.init_db()
-
-    # Inject our test DB into the app module
-    app_module.companion_db = cdb
-    app_module.study_analytics = analytics
+    init_all_app_globals(tmp.name)
     app_module.app.config['TESTING'] = True
 
     with app_module.app.test_client() as c:
