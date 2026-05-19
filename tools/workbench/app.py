@@ -517,7 +517,11 @@ def api_passage():
     if not ref_str:
         return jsonify({"error": "ref required"}), 400
 
-    ref = parse_reference(ref_str)
+    # Bug review #3: parse_reference raises ValueError on bad input.
+    try:
+        ref = parse_reference(ref_str)
+    except ValueError as e:
+        return jsonify({"error": f"invalid reference: {e}"}), 400
     bible_files = resolve_bible_files(versions)
 
     results = []
@@ -545,7 +549,11 @@ def api_interlinear():
     if not ref_str:
         return jsonify({"error": "ref required"}), 400
 
-    ref = parse_reference(ref_str)
+    # Bug review #3: parse_reference raises ValueError on bad input.
+    try:
+        ref = parse_reference(ref_str)
+    except ValueError as e:
+        return jsonify({"error": f"invalid reference: {e}"}), 400
     bible_files = resolve_bible_files(["ESV"])
     if not bible_files:
         return "<p>No Bible available for interlinear</p>"
