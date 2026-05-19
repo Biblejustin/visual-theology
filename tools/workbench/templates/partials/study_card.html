@@ -13,7 +13,7 @@
         <div class="side-by-side-right">
             <div class="card-resource-label">
                 <span>Your Working Translation</span>
-                {% with target='#card-response', session_id=session.id %}
+                {% with target='#card-response', session_id=session.id, phase=card.key %}
                     {% include 'partials/mic_button.html' %}
                 {% endwith %}
             </div>
@@ -49,7 +49,7 @@
             <div class="sb-notepad-area">
                 <div class="sb-notepad-label">
                     <span>My Notes</span>
-                    {% with target='.sb-notepad', session_id=session.id %}
+                    {% with target='.sb-notepad', session_id=session.id, phase=card.key %}
                         {% include 'partials/mic_button.html' %}
                     {% endwith %}
                 </div>
@@ -71,7 +71,7 @@
     {% if card.has_textarea and card.layout != "side_by_side" %}
     <div class="mic-toolbar">
         <span></span>
-        {% with target='#card-response', session_id=session.id %}
+        {% with target='#card-response', session_id=session.id, phase=card.key %}
             {% include 'partials/mic_button.html' %}
         {% endwith %}
     </div>

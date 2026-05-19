@@ -292,7 +292,17 @@
         Stage.startedAt = Date.now();
         Stage.statusEl.textContent = 'Recording';
         Stage.timeEl.textContent = '0:00';
-        Stage.transcriptEl.textContent = 'Listening…';
+        // Silent phases (prayer / translation / digest) get a context-aware
+        // placeholder that names the heart-and-devotion frame and tells
+        // Bryan the transcript arrives at the end. No live-text pressure.
+        if (owner && owner.suppressLiveTranscript) {
+            var phaseLabel = (owner.phase || '').replace(/_/g, ' ');
+            Stage.transcriptEl.textContent =
+              'Recording your ' + (phaseLabel || 'session') +
+              '. Transcript will appear when you stop — pray / read / think freely.';
+        } else {
+            Stage.transcriptEl.textContent = 'Listening…';
+        }
         Stage.transcriptEl.classList.add('empty');
         Stage.reviewEl.hidden = true;
         Stage.reviewEl.innerHTML = '';
@@ -467,11 +477,27 @@
 
     // ── Dictation instance ───────────────────────────────────────────────
 
+    // Silent phases per v2 spec §4 — prayer / read_translate / digestion are
+    // heart-and-devotion phases where the LLM does not engage. For dictation,
+    // we still RECORD the audio but suppress the live transcript display so
+    // Bryan can pray without prose interrupting. Whisper still transcribes on
+    // stop so the captured text is available.
+    var SILENT_PHASES = {
+        prayer: true,
+        read_translate: true,
+        text_work: true,
+        translation: true,
+        read_text: true,
+        digestion: true,
+    };
+
     function Dictation(wrap) {
         this.wrap = wrap;
         this.btn = wrap.querySelector('.mic-button');
         this.targetSelector = wrap.getAttribute('data-target');
         this.sessionId = wrap.getAttribute('data-session-id');
+        this.phase = wrap.getAttribute('data-phase') || '';
+        this.suppressLiveTranscript = !!SILENT_PHASES[this.phase];
         this.recorder = null;
         this.stream = null;
         this.chunks = [];
@@ -550,6 +576,10 @@
                 text += e.results[i][0].transcript;
             }
             setState(self.wrap, 'recording', 'Live text ready');
+            // Silent-phase recordings (prayer / translation / digest) suppress
+            // BOTH the textarea preview AND the on-stage transcript so Bryan
+            // can pray without prose interrupting. Whisper still runs on stop.
+            if (self.suppressLiveTranscript) return;
             self.writePreview(text);
             setStageTranscript(text);
         };

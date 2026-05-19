@@ -86,7 +86,7 @@
 
                 <div id="input-area">
                     <textarea id="study-input" placeholder="Ask your study partner..." rows="1"></textarea>
-                    {% with target='#study-input', session_id=session.id %}
+                    {% with target='#study-input', session_id=session.id, phase=session.current_phase %}
                         {% include 'partials/mic_button.html' %}
                     {% endwith %}
                     <button id="btn-study-send">Send</button>
@@ -133,7 +133,7 @@
     {% include 'partials/series_split_modal.html' %}
 
     <script src="/static/study.js?v=8"></script>
-    <script src="/static/dictation.js?v=9"></script>
+    <script src="/static/dictation.js?v=10"></script>
     <script>
         window.studySessionId = {{ session.id }};
         window.studyMode = "{{ mode }}";
