@@ -201,6 +201,22 @@ def require_auth():
             return redirect("/study/")
         return
     if not session.get("authenticated"):
+        # Per bug review #5: API / non-GET requests (e.g. PATCH /clock,
+        # POST /decisions/set, POST /transcribe) must NOT 302 to /login.
+        # Browsers / fetch() follow the redirect with the original method,
+        # producing 'PATCH /login → 405' floods in PM2 logs and silent
+        # client-side failures. Return 401 JSON for those callers so they
+        # can detect the expired session and prompt re-login explicitly.
+        wants_json = (
+            request.method != "GET" or
+            request.path.startswith("/api/") or
+            (request.accept_mimetypes.best == "application/json")
+        )
+        if wants_json:
+            return jsonify({
+                "error": "authentication required",
+                "login_url": "/login",
+            }), 401
         return redirect("/login")
     # Redirect root to the study tool
     if request.path == "/":
