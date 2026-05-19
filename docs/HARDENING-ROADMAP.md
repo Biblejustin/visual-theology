@@ -77,22 +77,37 @@ still read them for prior-session context.
 Tests: 926 passed, 22 skipped (was 948 — drop is the deleted
 companion tests). bp_companion is no longer needed in the split.
 
-## Polish #5b — `app.py` blueprint split (in progress)
-
-Plan: 5 blueprints (down from 6 after /companion/ deletion), one
-PR each, smallest/safest first.
+## Polish #5b — `app.py` blueprint split
 
 | # | Blueprint | Routes | Status |
 |---|-----------|--------|--------|
-| 1 | `bp_passage` | /api/passage, /api/interlinear, /api/resource/*, /api/library/* | ✓ done (commit 513a642) |
-| 2 | `bp_auth` | /login, /logout, require_auth (before_app_request) | ✓ done (commit 45e64c1) |
-| 3 | `bp_workbench` | / + /api/projects/* (legacy workbench) | pending |
-| 4 | `bp_study` | /study/* + /api/study/* | pending |
-| 5 | `bp_sermons` | /sermons/* | already a blueprint |
+| 1 | `bp_passage` | /api/passage, /api/interlinear, /api/resource/*, /api/library/* | ✓ done (513a642) |
+| 2 | `bp_auth` | /login, /logout, require_auth (before_app_request) | ✓ done (45e64c1) |
+| 3 | `bp_workbench` | / + /project/* + /library + /api/projects/* + /api/chat | ✓ done (25491ae) |
+| 4 | `bp_sermons` | /sermons/* (was sermons_bp, moved out of app.py) | ✓ done (75f9fd0) |
+| 5 | `bp_study` | /study/* + /api/study/* | **DEFERRED** |
 
-After #4 lands, `app.py` should be ~500 lines (setup + lifecycle +
-template helpers + blueprint registration) instead of the original
-2491.
+Bonus: `db_provider.py` added to break the circular import from
+bp_sermons → app for get_db().
+
+**Why bp_study is deferred:** /study/* IS the app at this point — 26
+routes that touch every shared global (companion_db, study_analytics,
+accuser_detector, mentor_store, pastor_feedback, session_decisions).
+Extracting it would either (a) require lazy module-attribute lookup
+from inside every route handler, or (b) require routing all shared
+state through a new `app_state.py` registry. Both add a layer of
+indirection for marginal benefit — moving 1100 lines from app.py to
+bp_study.py doesn't materially improve the mental model when those
+lines all reference the same six app-level globals.
+
+The four extracted blueprints captured the genuinely separable
+concerns. What's left in app.py is the /study/ surface + setup +
+template helpers — and that's the right scope for the "main" app
+module.
+
+**Net result:** app.py 2491 → 1289 lines (-48%). Plus 7 new modules
+(validators, db_provider, bp_passage, bp_auth, bp_workbench,
+bp_sermons, and the existing tests). 926 tests passing.
 
 ## Not in scope (separate threads)
 
