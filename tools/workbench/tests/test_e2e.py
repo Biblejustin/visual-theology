@@ -46,6 +46,9 @@ def test_create_session(page, base_url):
 
 def test_create_session_invalid(page, base_url):
     """Invalid passage shows server-side error, does not create session."""
+    if base_url is None:
+        import pytest
+        pytest.skip("Live dev server on port 5111 — skipping E2E")
     page.goto(f"{base_url}/study/")
 
     # Type a non-parseable passage (bypasses HTML required attribute)
