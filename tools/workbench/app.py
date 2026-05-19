@@ -82,7 +82,8 @@ from seed_questions import seed_question_bank
 from series_planner import propose_series_plan
 from app_secrets import sermonaudio_api_key, sermonaudio_broadcaster_id, anthropic_api_key
 from validators import (
-    parse_int_arg, json_body, require_string, require_session,
+    parse_int_arg, json_body, require_string, require_int,
+    require_list_of_strings, require_session,
 )
 
 try:
@@ -720,11 +721,10 @@ def study_session_view(session_id):
 @app.route("/study/session/<int:session_id>/discuss", methods=["POST"])
 def study_discuss(session_id):
     """Stream a study response via SSE."""
-    data = request.get_json(silent=True) or {}
-    message = data.get("message", "").strip()
-
-    if not message:
-        return jsonify({"error": "message required"}), 400
+    data, err = json_body()
+    if err: return err
+    message, err = require_string(data, "message", min_length=1)
+    if err: return err
 
     # Record message analytics
     if study_analytics:
@@ -799,11 +799,11 @@ def study_bible_notes_route(session_id):
 @app.route("/study/session/<int:session_id>/card/autosave", methods=["POST"])
 def study_card_autosave(session_id):
     """Auto-save card textarea content without advancing phase."""
-    data = request.get_json(silent=True) or {}
+    data, err = json_body()
+    if err: return err
     content = data.get("content", "")
-    session = companion_db.get_session(session_id)
-    if not session:
-        return jsonify({"error": "not found"}), 404
+    session, err = require_session(companion_db, session_id)
+    if err: return err
     if session.get("parent_session_id"):
         return jsonify({"error": "child_session_read_only"}), 403
     phase = session.get("current_phase", "prayer")
@@ -1070,17 +1070,15 @@ def study_outline(session_id):
 def study_outline_add(session_id):
     """Add a node to the outline."""
     # Bug review #4: 404 for missing session (avoids FK 500 in the helper).
-    if not companion_db.get_session(session_id):
-        return jsonify({"error": "session not found"}), 404
-    data = request.get_json(silent=True) or {}
+    _, err = require_session(companion_db, session_id)
+    if err: return err
+    data, err = json_body()
+    if err: return err
     # Bug review #6: content must be a string. {"content": 12}.strip() crashed.
-    content = data.get("content", "")
-    if not isinstance(content, str):
-        return jsonify({"error": "content must be a string"}), 400
-    content = content.strip()
-    node_type = data.get("node_type", "note")
-    if not isinstance(node_type, str):
-        return jsonify({"error": "node_type must be a string"}), 400
+    content, err = require_string(data, "content", allow_missing=True, default="")
+    if err: return err
+    node_type, err = require_string(data, "node_type", allow_missing=True, default="note")
+    if err: return err
 
     if content:
         node_id = companion_db.add_outline_node(
@@ -1098,7 +1096,8 @@ def study_outline_add(session_id):
 @app.route("/study/session/<int:session_id>/outline/<int:node_id>", methods=["PATCH"])
 def study_outline_update(session_id, node_id):
     """Update an outline node."""
-    data = request.get_json(silent=True) or {}
+    data, err = json_body()
+    if err: return err
     rowcount = companion_db.update_outline_node(
         node_id=node_id,
         content=data.get("content"),
@@ -1132,27 +1131,17 @@ def study_clock_update(session_id):
         source of the 898-year corruption — the tab-suspend bug used to
         let clients post any garbage number)
     """
-    if not companion_db.get_session(session_id):
-        return jsonify({"error": "session not found"}), 404
+    _, err = require_session(companion_db, session_id)
+    if err: return err
 
-    data = request.get_json(silent=True) or {}
-    if "elapsed" not in data:
-        return jsonify({"error": "elapsed required"}), 400
-    try:
-        elapsed = int(data["elapsed"])
-    except (TypeError, ValueError):
-        return jsonify({"error": "elapsed must be an integer"}), 400
-    if elapsed < 0:
-        return jsonify({"error": "elapsed must be non-negative"}), 400
+    data, err = json_body()
+    if err: return err
     # 14 days is the absolute ceiling — no real sermon-prep session is
     # longer than that, and clamping here prevents future tab-suspend
     # bugs from poisoning the DB the way the pre-cc9b914 timer did.
     MAX_REASONABLE_SECONDS = 14 * 24 * 3600
-    if elapsed > MAX_REASONABLE_SECONDS:
-        return jsonify({
-            "error": "elapsed exceeds ceiling",
-            "ceiling_seconds": MAX_REASONABLE_SECONDS,
-        }), 400
+    elapsed, err = require_int(data, "elapsed", lo=0, hi=MAX_REASONABLE_SECONDS)
+    if err: return err
 
     conn = companion_db._conn()
     conn.execute(
@@ -1172,13 +1161,16 @@ def study_session_split(session_id):
     Position 1 narrows the parent. Positions 2..N create children.
     All sermons currently linked to the parent are re-matched after the split.
     """
-    payload = request.get_json(silent=True) or {}
+    payload, err = json_body()
+    if err: return err
     plan = payload.get("plan") or []
     if not plan:
         return jsonify({"error": "empty_plan"}), 400
 
-    parent = companion_db.get_session(session_id)
-    if not parent:
+    parent, err = require_session(companion_db, session_id)
+    if err:
+        # Override 'session not found' shape to match historical 'session_not_found'
+        # that JS clients on the split modal already handle.
         return jsonify({"error": "session_not_found"}), 404
     if companion_db.get_children(session_id):
         return jsonify({"error": "already_split"}), 400
