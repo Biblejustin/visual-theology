@@ -154,10 +154,22 @@ _ACTIVE_FOCUS = {
 
 
 def _format_elapsed_vs_budget(elapsed_seconds, budget_min):
-    """Return a short '23m / 30m budget — yellow' style line."""
+    """Return a short '23m / 30m budget — yellow' style line.
+
+    Returns '' when no elapsed signal is available (no phase_events
+    for the current phase yet). Suppressing is better than showing
+    '0 min / 30 min — green' on a session that's actually been
+    running for 90 minutes — the gauge would mislead the LLM into
+    thinking Bryan just arrived in the phase. Historical sessions
+    that predate the picker have this gap; the gauge reappears as
+    soon as Bryan changes phases (which fires events) or after the
+    next /card/next transition.
+    """
     if budget_min is None:
         return ''
-    elapsed_min = int(elapsed_seconds / 60) if elapsed_seconds else 0
+    if not elapsed_seconds or elapsed_seconds < 30:
+        return ''  # no real signal yet — don't fake one
+    elapsed_min = int(elapsed_seconds / 60)
     delta = elapsed_min - budget_min
     if delta < 0:
         color = 'green'

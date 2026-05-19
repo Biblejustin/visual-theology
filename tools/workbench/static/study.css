@@ -1728,18 +1728,58 @@ body {
   .cutoff-banner-body { flex-direction: column; align-items: flex-start; padding: 10px 12px; }
   .cutoff-banner-text { font-size: 14px; }
 
-  /* Sticky stripes stack vertically; allow horizontal scroll on ring strip */
-  #time-coach-strip,
-  .horizon-bar { font-size: 12px; }
+  /* Sticky stripes stack vertically; allow horizontal scroll on ring strip.
+   * (selector fix: rendered DOM uses .time-coach-strip, not #...) */
+  .time-coach-strip,
+  .horizon-bar { font-size: 12px; max-width: 100%; overflow-x: auto; }
+  .time-coach-strip { padding: 6px 10px; }
 
-  /* Outline drawer (when shown) goes full-width */
-  .outline-drawer,
-  #outline-column {
+  /* Outline sidebar (when shown) goes full-width below the conversation.
+   * Real selector is #outline-sidebar per study_session.html. */
+  #outline-sidebar,
+  .outline-drawer {
     width: 100% !important;
     max-width: 100% !important;
     border-left: none;
     border-top: 1px solid var(--border, #2a2d35);
+    overflow-x: auto;
   }
+
+  /* ── Start page (/study/) — sermon list scrolling + nav wrap ─────── */
+  .study-start {
+    padding: 12px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  .study-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .study-nav a { padding: 4px 0; }
+  .study-start h1 { font-size: 24px; margin: 12px 0 8px; }
+  .study-start form input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 16px;
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+  .study-start form .btn { min-height: 44px; padding: 10px 18px; }
+  .recent-sessions, .session-card {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .session-card {
+    padding: 12px;
+    margin-bottom: 8px;
+  }
+
+  /* (Patterns page has its own inline <style> and doesn't load study.css —
+   *  its mobile rules live inside templates/study_patterns.html.) */
 
   /* Modals must not overflow */
   .series-split-modal {

@@ -40,6 +40,31 @@
       .excerpt { color: #b8af9d; font-size: 12px; }
       .filter { font-size: 12px; color: #8a8275; }
       .filter a { color: #c9b88a; }
+
+      /* Mobile (≤700px) — tables wrap in horizontal scroll, body padding
+       * shrinks, nav links wrap. Bryan flagged tables clipping on
+       * iPhone (review #4 follow-up). */
+      @media (max-width: 700px) {
+        body { padding: 12px; max-width: 100%; }
+        h1 { font-size: 20px; }
+        h2 { font-size: 15px; margin-top: 20px; }
+        .nav { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+        .nav a { margin-right: 0; padding: 4px 0; min-height: 44px;
+                 display: inline-flex; align-items: center; }
+        .stat-row { flex-wrap: wrap; gap: 8px; }
+        .stat { min-width: 0; flex: 1 1 calc(50% - 4px); }
+        /* Tables can't reflow safely — wrap each in a scrolling container
+         * so columns stay readable. */
+        table {
+          display: block;
+          overflow-x: auto;
+          white-space: nowrap;
+          -webkit-overflow-scrolling: touch;
+          max-width: 100%;
+        }
+        th, td { padding: 6px 8px; }
+        .excerpt { white-space: normal; }
+      }
     </style>
 </head>
 <body>
