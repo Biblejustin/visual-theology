@@ -1794,18 +1794,44 @@ def study_outline_delete(session_id, node_id):
 
 @app.route("/study/session/<int:session_id>/clock", methods=["PATCH"])
 def study_clock_update(session_id):
-    """Update elapsed time from client (absolute, not delta)."""
-    data = request.get_json() or {}
-    elapsed = data.get("elapsed", 0)
-    if elapsed:
-        # Client sends total elapsed — set it directly, don't add as delta
-        conn = companion_db._conn()
-        conn.execute(
-            "UPDATE sessions SET total_elapsed_seconds = ?, updated_at = ? WHERE id = ?",
-            (elapsed, companion_db._now(), session_id))
-        conn.commit()
-        conn.close()
-    return jsonify({"ok": True})
+    """Update elapsed time from client (absolute, not delta).
+
+    Hardened per bug review #3-#6:
+      - 404 when the session doesn't exist (was silently 200)
+      - elapsed=0 is a valid reset (was treated as missing because falsy)
+      - rejects non-int, negative, and absurdly-large values (was the
+        source of the 898-year corruption — the tab-suspend bug used to
+        let clients post any garbage number)
+    """
+    if not companion_db.get_session(session_id):
+        return jsonify({"error": "session not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    if "elapsed" not in data:
+        return jsonify({"error": "elapsed required"}), 400
+    try:
+        elapsed = int(data["elapsed"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "elapsed must be an integer"}), 400
+    if elapsed < 0:
+        return jsonify({"error": "elapsed must be non-negative"}), 400
+    # 14 days is the absolute ceiling — no real sermon-prep session is
+    # longer than that, and clamping here prevents future tab-suspend
+    # bugs from poisoning the DB the way the pre-cc9b914 timer did.
+    MAX_REASONABLE_SECONDS = 14 * 24 * 3600
+    if elapsed > MAX_REASONABLE_SECONDS:
+        return jsonify({
+            "error": "elapsed exceeds ceiling",
+            "ceiling_seconds": MAX_REASONABLE_SECONDS,
+        }), 400
+
+    conn = companion_db._conn()
+    conn.execute(
+        "UPDATE sessions SET total_elapsed_seconds = ?, updated_at = ? WHERE id = ?",
+        (elapsed, companion_db._now(), session_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "elapsed": elapsed})
 
 
 @app.route("/study/session/<int:session_id>/split", methods=["POST"])

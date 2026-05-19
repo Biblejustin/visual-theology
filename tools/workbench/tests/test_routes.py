@@ -49,6 +49,61 @@ def client():
     os.unlink(tmp.name)
 
 
+def test_clock_endpoint_404_for_missing_session(client):
+    """Bug review #3 — was silently returning 200 for nonexistent sessions."""
+    r = client.patch('/study/session/99999/clock', json={'elapsed': 100})
+    assert r.status_code == 404
+
+
+def test_clock_endpoint_accepts_elapsed_zero(client):
+    """Bug review #4 — elapsed=0 was treated as missing because falsy."""
+    r = client.post('/companion/session/new', data={'passage': 'Romans 1:18-23'})
+    sid = int(r.headers['Location'].rstrip('/').split('/')[-1])
+    r = client.patch(f'/study/session/{sid}/clock', json={'elapsed': 0})
+    assert r.status_code == 200
+    assert r.get_json().get('ok') is True
+
+
+def test_clock_endpoint_rejects_missing_elapsed(client):
+    r = client.post('/companion/session/new', data={'passage': 'Romans 1:18-23'})
+    sid = int(r.headers['Location'].rstrip('/').split('/')[-1])
+    r = client.patch(f'/study/session/{sid}/clock', json={})
+    assert r.status_code == 400
+
+
+def test_clock_endpoint_rejects_negative(client):
+    r = client.post('/companion/session/new', data={'passage': 'Romans 1:18-23'})
+    sid = int(r.headers['Location'].rstrip('/').split('/')[-1])
+    r = client.patch(f'/study/session/{sid}/clock', json={'elapsed': -100})
+    assert r.status_code == 400
+
+
+def test_clock_endpoint_rejects_non_int(client):
+    r = client.post('/companion/session/new', data={'passage': 'Romans 1:18-23'})
+    sid = int(r.headers['Location'].rstrip('/').split('/')[-1])
+    r = client.patch(f'/study/session/{sid}/clock', json={'elapsed': 'lots'})
+    assert r.status_code == 400
+
+
+def test_clock_endpoint_rejects_absurdly_large_values(client):
+    """Bug review #6: pre-cc9b914 timer wrote 898 years to the DB."""
+    r = client.post('/companion/session/new', data={'passage': 'Romans 1:18-23'})
+    sid = int(r.headers['Location'].rstrip('/').split('/')[-1])
+    # 14 days + 1s — just past the ceiling
+    r = client.patch(f'/study/session/{sid}/clock', json={'elapsed': 14 * 24 * 3600 + 1})
+    assert r.status_code == 400
+
+
+def test_clock_endpoint_persists_valid_elapsed(client):
+    import app as app_module
+    r = client.post('/companion/session/new', data={'passage': 'Romans 1:18-23'})
+    sid = int(r.headers['Location'].rstrip('/').split('/')[-1])
+    r = client.patch(f'/study/session/{sid}/clock', json={'elapsed': 1234})
+    assert r.status_code == 200
+    s = app_module.companion_db.get_session(sid)
+    assert s['total_elapsed_seconds'] == 1234
+
+
 def test_study_patterns_handles_garbage_days_param(client):
     """Per bug review #2 — invalid days param previously crashed (500)."""
     r = client.get('/study/patterns?days=x')
