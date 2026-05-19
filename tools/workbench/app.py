@@ -466,9 +466,13 @@ def api_create_project():
 
 @app.route("/api/projects/<project_id>/phase", methods=["POST"])
 def api_update_phase(project_id):
-    phase = request.form.get("phase") or request.json.get("phase")
-    if phase:
-        db.update_project_phase(project_id, phase)
+    # Accept either form or JSON. silent=True so non-JSON bodies don't 415
+    # before our validation runs (bug review #1).
+    json_data = request.get_json(silent=True) or {}
+    phase = request.form.get("phase") or json_data.get("phase")
+    if not phase:
+        return jsonify({"error": "phase required"}), 400
+    db.update_project_phase(project_id, phase)
     return jsonify({"ok": True})
 
 
@@ -482,9 +486,11 @@ def api_delete_project(project_id):
 
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
-    data = request.get_json()
+    # silent=True so a non-JSON body returns our 400 instead of Flask's 415
+    # (bug review #1). Coerce to {} so .get calls are safe.
+    data = request.get_json(silent=True) or {}
     project_id = data.get("project_id")
-    message = data.get("message", "").strip()
+    message = (data.get("message") or "").strip()
     model = data.get("model", "claude-haiku-4-5-20251001")
 
     if not project_id or not message:
@@ -561,7 +567,7 @@ def api_get_notes(project_id):
 
 @app.route("/api/projects/<project_id>/notes", methods=["POST"])
 def api_save_notes(project_id):
-    data = request.get_json() or request.form
+    data = request.get_json(silent=True) or request.form
     section = data.get("section", "general")
     content = data.get("content", "")
     db.save_note(project_id, content, section)
@@ -930,7 +936,7 @@ def companion_phase_next(session_id):
 @app.route("/companion/session/<int:session_id>/discuss", methods=["POST"])
 def companion_discuss(session_id):
     """Stream a discussion response via SSE."""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     message = data.get("message", "").strip()
 
     if not message:
@@ -977,7 +983,7 @@ def companion_outline_add(session_id):
 @app.route("/companion/session/<int:session_id>/outline/<int:node_id>", methods=["PATCH"])
 def companion_outline_update(session_id, node_id):
     """Update an outline node."""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     companion_db.update_outline_node(
         node_id=node_id,
         content=data.get("content"),
@@ -1007,7 +1013,7 @@ def companion_export(session_id):
 @app.route("/companion/session/<int:session_id>/timer", methods=["PATCH"])
 def companion_timer_update(session_id):
     """Update timer state from client."""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     remaining = data.get("remaining")
     paused = data.get("paused")
     elapsed_delta = data.get("elapsed_delta", 0)
@@ -1428,7 +1434,7 @@ def study_session_view(session_id):
 @app.route("/study/session/<int:session_id>/discuss", methods=["POST"])
 def study_discuss(session_id):
     """Stream a study response via SSE."""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     message = data.get("message", "").strip()
 
     if not message:
@@ -1507,7 +1513,7 @@ def study_bible_notes_route(session_id):
 @app.route("/study/session/<int:session_id>/card/autosave", methods=["POST"])
 def study_card_autosave(session_id):
     """Auto-save card textarea content without advancing phase."""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     content = data.get("content", "")
     session = companion_db.get_session(session_id)
     if not session:
@@ -1670,7 +1676,7 @@ def study_word_info(session_id):
     Looks up BDAG/BDB/HALOT from the library for glosses.
     Falls back to Claude Haiku only as last resort.
     """
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     word = data.get("word", "").strip()
     if not word:
         return jsonify({"error": "word required"}), 400
@@ -1743,7 +1749,10 @@ def study_word_info(session_id):
 @app.route("/study/session/<int:session_id>/annotate", methods=["POST"])
 def study_annotate(session_id):
     """Save a star annotation from the study bible card."""
-    data = request.get_json()
+    # Bug review #1 + #4: silent JSON + session existence check
+    if not companion_db.get_session(session_id):
+        return jsonify({"error": "session not found"}), 404
+    data = request.get_json(silent=True) or {}
     aid = companion_db.save_card_annotation(
         session_id, phase="study_bibles",
         source=data.get("source", ""),
@@ -1755,7 +1764,10 @@ def study_annotate(session_id):
 @app.route("/study/session/<int:session_id>/notepad", methods=["POST"])
 def study_notepad(session_id):
     """Save notepad content for the current phase."""
-    data = request.get_json()
+    # Bug review #1 + #4: silent JSON + session existence check
+    if not companion_db.get_session(session_id):
+        return jsonify({"error": "session not found"}), 404
+    data = request.get_json(silent=True) or {}
     companion_db.save_card_notepad(session_id, phase=data.get("phase", "study_bibles"),
                                    content=data.get("content", ""))
     return jsonify({"ok": True})
@@ -1771,7 +1783,7 @@ def study_outline(session_id):
 @app.route("/study/session/<int:session_id>/outline/add", methods=["POST"])
 def study_outline_add(session_id):
     """Add a node to the outline."""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     content = data.get("content", "").strip()
     node_type = data.get("node_type", "note")
 
@@ -1791,7 +1803,7 @@ def study_outline_add(session_id):
 @app.route("/study/session/<int:session_id>/outline/<int:node_id>", methods=["PATCH"])
 def study_outline_update(session_id, node_id):
     """Update an outline node."""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     companion_db.update_outline_node(
         node_id=node_id,
         content=data.get("content"),
@@ -2289,7 +2301,8 @@ def get_commitment():
 
 @sermons_bp.route('/patterns/coach/commitment', methods=['POST'])
 def create_commitment():
-    data = request.json or {}
+    # silent=True so non-JSON bodies don't 415 (bug review #1)
+    data = request.get_json(silent=True) or {}
     dimension_key = data.get('dimension_key', '')
     experiment = data.get('practice_experiment', '')
     if not dimension_key or not experiment:
@@ -2364,9 +2377,20 @@ def sermon_coach_message(sermon_id):
 @sermons_bp.route('/coaching-insight', methods=['POST'])
 def create_coaching_insight():
     import json as _json
-    data = request.get_json()
-    if not data or not isinstance(data, dict) or not data.get('summary', '').strip():
+    # silent=True so non-JSON bodies return 400 instead of 415 (bug review #1)
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict) or not (data.get('summary') or '').strip():
         return jsonify({'error': 'summary is required'}), 400
+    # Validate that applies_when / avoid_when (if present) are lists of strings
+    # (bug review #10). A string would silently become list-of-chars; an int
+    # raises TypeError inside json.dumps(list(...)).
+    for field in ('applies_when', 'avoid_when'):
+        if field in data:
+            v = data[field]
+            if not isinstance(v, list) or not all(isinstance(s, str) for s in v):
+                return jsonify({
+                    'error': f'{field} must be a list of strings'
+                }), 400
     db = get_db()
     conn = db._conn()
     try:
