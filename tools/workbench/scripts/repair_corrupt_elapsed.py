@@ -24,9 +24,10 @@ import sys
 from datetime import datetime, timezone
 
 MAX_SECONDS = 14 * 24 * 3600  # 14 days
+SERMON_BUDGET_SEC = 13 * 3600 + 30 * 60  # ~13.5h sermon design target
 
 
-def repair(db_path, dry_run=False):
+def repair(db_path, dry_run=False, aggressive=False):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
@@ -47,6 +48,12 @@ def repair(db_path, dry_run=False):
         except (ValueError, TypeError):
             age = MAX_SECONDS
         ceiling = min(max(0, age), MAX_SECONDS)
+        if aggressive:
+            # Also cap to 2x the sermon design budget (~27h). Catches sessions
+            # that look implausible for one sermon even though within session
+            # age (e.g. 109h on a single passage that's clearly inflated by
+            # the old tab-suspend bug).
+            ceiling = min(ceiling, SERMON_BUDGET_SEC * 2)
         if elapsed > ceiling:
             fixes.append((r['id'], r['passage_ref'], elapsed, ceiling))
 
@@ -81,5 +88,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default="/Volumes/External/Logos4/tools/workbench/companion.db")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--aggressive", action="store_true",
+        help="Also cap to 2x the 13.5h sermon design budget (~27h). Catches "
+             "sessions that look inflated even within their session age.")
     args = parser.parse_args()
-    sys.exit(repair(args.db, dry_run=args.dry_run))
+    sys.exit(repair(args.db, dry_run=args.dry_run, aggressive=args.aggressive))
