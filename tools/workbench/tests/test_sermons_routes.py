@@ -20,7 +20,7 @@ def client(monkeypatch):
     monkeypatch.setenv('COMPANION_DB_PATH', db_path)
     app.config['TESTING'] = True
     import app as app_mod
-    app_mod._db_instance = None
+    import db_provider; db_provider._db_instance = None
     with app.test_client() as c:
         with c.session_transaction() as sess:
             sess['authenticated'] = True

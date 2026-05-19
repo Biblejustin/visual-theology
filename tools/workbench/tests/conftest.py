@@ -162,6 +162,13 @@ def init_all_app_globals(db_path):
     app_module.mentor_store = mentor
     app_module.pastor_feedback = feedback
     app_module.session_decisions = decisions
+
+    # Reset the db_provider cache so get_db() reads the new db_path env var.
+    # (get_db() lives in db_provider.py after the polish #5b blueprint split.)
+    import db_provider
+    db_provider._db_instance = None
+    import os as _os
+    _os.environ['COMPANION_DB_PATH'] = db_path
     return {
         'companion_db': cdb,
         'study_analytics': analytics,

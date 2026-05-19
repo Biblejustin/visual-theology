@@ -19,7 +19,7 @@ def client_with_linked_session(monkeypatch):
     os.close(db_fd)
     monkeypatch.setenv('COMPANION_DB_PATH', db_path)
     import app as app_mod
-    app_mod._db_instance = None
+    import db_provider; db_provider._db_instance = None
     app.config['TESTING'] = True
     with app.test_client() as c:
         with c.session_transaction() as sess:

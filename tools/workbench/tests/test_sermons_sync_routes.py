@@ -22,7 +22,7 @@ def client(monkeypatch):
     os.close(db_fd)
     monkeypatch.setenv('COMPANION_DB_PATH', db_path)
     import app as app_mod
-    app_mod._db_instance = None
+    import db_provider; db_provider._db_instance = None
     app.config['TESTING'] = True
     with app.test_client() as c:
         with c.session_transaction() as sess:
@@ -54,8 +54,9 @@ def test_manual_sync_with_mock_client(client, monkeypatch):
         def get_sermon_detail(self, sermon_id):
             return None
 
-    import app as app_mod
-    monkeypatch.setattr(app_mod, '_make_sermonaudio_client', lambda: MockClient())
+    import bp_sermons
+    # _make_sermonaudio_client moved to bp_sermons in the polish #5b split
+    monkeypatch.setattr(bp_sermons, '_make_sermonaudio_client', lambda: MockClient())
     resp = c.post('/sermons/sync')
     assert resp.status_code == 202
     data = resp.get_json()
