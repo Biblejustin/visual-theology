@@ -211,5 +211,24 @@ def test_next_action_phase_over_when_sermon_ok():
 
 def test_next_action_empty_when_all_ok_and_session_young():
     from time_coach import _next_action, BUDGET_OK
-    out = _next_action('word_study', BUDGET_OK, 60, sermon_budget_state=BUDGET_OK)
+    out = _next_action('word_study', BUDGET_OK, 60, sermon_budget_state=BUDGET_OK,
+                       time_in_phase_sec=10)
+    assert out == ''
+
+
+def test_next_action_affirmation_fires_when_healthy_and_meaningful_work_done():
+    """DopBoost: budgets ok + in-phase ≥5min + session ≥10min → affirmation."""
+    from time_coach import _next_action, BUDGET_OK
+    out = _next_action('word_study', BUDGET_OK, 11 * 60,
+                       sermon_budget_state=BUDGET_OK,
+                       time_in_phase_sec=6 * 60)
+    assert out  # non-empty
+
+
+def test_next_action_no_affirmation_at_session_start():
+    """Don't surface affirmation in the first few minutes of a session."""
+    from time_coach import _next_action, BUDGET_OK
+    out = _next_action('word_study', BUDGET_OK, 60,
+                       sermon_budget_state=BUDGET_OK,
+                       time_in_phase_sec=10)
     assert out == ''

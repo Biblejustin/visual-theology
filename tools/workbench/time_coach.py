@@ -117,6 +117,17 @@ _NEXT_ACTION_POOL = {
         "4+ hours in this session. Step away — your brain needs reset.",
         "Long session. A 10-min walk would compound the next hour.",
     ],
+    # ── DopBoost affirmations (v2 spec §5, arxiv 2507.06864) ─────────
+    # Soft 1-line surfaced when budgets are HEALTHY and meaningful work is
+    # underway. Triggered only on positive patterns — anti-shame design.
+    'affirmation': [
+        "Good pace through {phase}. The work is real.",
+        "On budget today — keep this rhythm.",
+        "Solid prep happening. The Lord blesses faithful work.",
+        "You're in the zone. Trust this pace.",
+        "Steady week so far. This is what good sermon weeks look like.",
+        "Right where you should be in {phase}. Carry on.",
+    ],
 }
 
 
@@ -134,10 +145,12 @@ def _rotated_phrasing(pool_key, **fmt):
 
 
 def _next_action(phase, budget_state, total_elapsed_sec,
-                 sermon_budget_state=None):
+                 sermon_budget_state=None,
+                 time_in_phase_sec=0):
     """One-line suggestion for what's next. Precedence: most urgent wins.
-    Phrasings rotate by day-of-year so the same advice doesn't fire
-    identically two days running (anti-habituation)."""
+    When nothing is urgent and meaningful work is happening, surfaces a
+    DopBoost-style affirmation per ADHD-productivity research (positive-
+    pattern recognition, not always-on)."""
     if sermon_budget_state == BUDGET_OVER:
         return _rotated_phrasing('sermon_over')
     if budget_state == BUDGET_OVER:
@@ -148,6 +161,17 @@ def _next_action(phase, budget_state, total_elapsed_sec,
         return _rotated_phrasing('phase_warn', phase=phase)
     if total_elapsed_sec >= 4 * 3600:
         return _rotated_phrasing('long_session')
+    # DopBoost affirmation conditions (all must hold):
+    # - budgets are healthy
+    # - meaningful in-phase work (>=5 min)
+    # - meaningful session work (>=10 min total)
+    # Per arxiv 2507.06864: triggered only on positive patterns, never
+    # always-on. The strip otherwise stays empty in healthy state.
+    if (budget_state == BUDGET_OK
+            and sermon_budget_state in (None, BUDGET_OK)
+            and time_in_phase_sec >= 5 * 60
+            and total_elapsed_sec >= 10 * 60):
+        return _rotated_phrasing('affirmation', phase=phase)
     return ""
 
 
@@ -216,7 +240,8 @@ def assess_session(companion_db, study_analytics, session_id):
         'sermon_remaining_sec': sermon_remaining,
         'sermon_budget_state': sermon_state,
         'next_action': _next_action(phase, state, total_elapsed,
-                                    sermon_budget_state=sermon_state),
+                                    sermon_budget_state=sermon_state,
+                                    time_in_phase_sec=time_in_phase),
     }
 
 
