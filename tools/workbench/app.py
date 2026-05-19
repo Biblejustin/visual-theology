@@ -738,12 +738,6 @@ def study_discuss(session_id):
     )
 
 
-def _is_child_session(session_id):
-    """True if this session has a parent (i.e., it's a child in a series)."""
-    sess = companion_db.get_session(session_id)
-    return bool(sess and sess.get("parent_session_id"))
-
-
 @app.route("/study/session/<int:session_id>/card/next", methods=["POST"])
 def study_card_next(session_id):
     """Advance to the next card phase, saving any response."""
