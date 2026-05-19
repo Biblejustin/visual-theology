@@ -144,6 +144,26 @@ def get_scheduler():
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32).hex())
 
+# When proxied (Cloudflare tunnel → 127.0.0.1:5111), trust the X-Forwarded-*
+# headers so Flask sees the public HTTPS scheme + host. Otherwise url_for and
+# the Secure cookie flag below misbehave.
+try:
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+except ImportError:
+    pass
+
+# Mobile / cloudflared cookie hardening: when the request comes in over HTTPS
+# (Cloudflare tunnel adds X-Forwarded-Proto=https which ProxyFix surfaces),
+# the session cookie must be Secure + SameSite=Lax so iOS Safari accepts it
+# cross-origin and won't drop it after a redirect. Lax is the right level for
+# this app — we have no third-party embedding, just direct phone access.
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=(os.environ.get('LOGOS_FORCE_HTTPS_COOKIE') == '1'),
+)
+
 # ── Auth moved to bp_auth ────────────────────────────────────────────────
 from bp_auth import bp_auth
 app.register_blueprint(bp_auth)

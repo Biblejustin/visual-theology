@@ -1608,3 +1608,138 @@ body {
   margin-top: 12px;
 }
 .series-split-modal .hint { font-size: 13px; opacity: 0.75; }
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Mobile responsive layer (iPhone access via cloudflared tunnel)
+
+   The desktop layout uses sticky stripes (horizon bar, cutoff banner,
+   persona, time coach, picker) that crowd a 375px viewport. On phones
+   we collapse to a single column, hide the heaviest stripes by default,
+   and bump touch targets to iOS 44pt minimum.
+   ───────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 700px) {
+  :root {
+    --topbar-h: 48px;
+    --conv-max-w: 100%;
+    --card-max-w: 100%;
+  }
+
+  /* Topbar: collapse non-essential bits, keep clock + passage visible */
+  #study-topbar {
+    padding: 8px 12px;
+    font-size: 14px;
+    gap: 8px;
+  }
+  .topbar-passage {
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 50vw;
+  }
+  .topbar-dots { display: none; }     /* progress dots crowd the bar */
+  #session-clock { font-size: 14px; padding: 4px 8px; }
+
+  /* Single-column content layout */
+  #study-content-row {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  #card-area {
+    padding: 16px 12px;
+  }
+
+  /* Conversation thread is the main mobile surface */
+  #conversation-column { width: 100%; }
+  #conversation-thread { padding: 16px 12px 12px; gap: 12px; }
+  .conv-message {
+    max-width: 100%;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  /* Input area must dodge iOS keyboard + Safari URL bar */
+  #input-area {
+    padding: 8px 10px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+    gap: 8px;
+  }
+  #study-input {
+    font-size: 16px;        /* prevent iOS zoom on focus */
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+
+  /* Mic + send buttons need 44pt thumb area */
+  #mic-button,
+  .send-button,
+  .tab-button,
+  .topbar-link,
+  .cutoff-banner-dismiss,
+  #open-split-modal {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 10px 14px;
+    font-size: 15px;
+  }
+
+  /* Picker dropdown: comfortable thumb tap, full-width on phone */
+  .v2-phase-picker {
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    gap: 8px;
+    top: 48px;       /* match shorter topbar */
+  }
+  .v2-phase-picker select {
+    min-width: 0;
+    flex: 1;
+    min-height: 44px;
+    font-size: 16px;
+  }
+  .v2-phase-picker .status { flex-basis: 100%; }
+
+  /* Cutoff banner: keep readable, allow wrap */
+  .cutoff-banner-body { flex-direction: column; align-items: flex-start; padding: 10px 12px; }
+  .cutoff-banner-text { font-size: 14px; }
+
+  /* Sticky stripes stack vertically; allow horizontal scroll on ring strip */
+  #time-coach-strip,
+  .horizon-bar { font-size: 12px; }
+
+  /* Outline drawer (when shown) goes full-width */
+  .outline-drawer,
+  #outline-column {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-left: none;
+    border-top: 1px solid var(--border, #2a2d35);
+  }
+
+  /* Modals must not overflow */
+  .series-split-modal {
+    min-width: 0;
+    width: calc(100vw - 24px);
+    margin: 12px;
+  }
+  .series-split-modal table { font-size: 13px; }
+
+  /* Session-header / split button — single column */
+  .session-header-actions { padding: 8px 12px; }
+  .series-breadcrumb { padding: 8px 12px; flex-wrap: wrap; gap: 6px 10px; }
+
+  /* Patterns + start pages also benefit */
+  .study-start-passage-input,
+  .study-start-passage-input input {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 16px;
+    min-height: 44px;
+  }
+}
+
+/* iPhone-X-and-newer notch / home indicator awareness */
+@supports (padding: max(0px)) {
+  body { padding-bottom: env(safe-area-inset-bottom); }
+}
