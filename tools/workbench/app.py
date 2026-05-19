@@ -902,8 +902,14 @@ def study_set_v2_phase(session_id):
 
     Validates the key against v2_phases.V2_PHASE_KEYS so a stale UI
     can't write garbage. 404 on missing session, 400 on bad key.
+
+    Also fires phase_events for the v2 key (exit-old + enter-new) so
+    the per-phase elapsed gauge in the persona prompt's ACTIVE FOCUS
+    block is accurate. Previously the gauge could only read elapsed
+    from legacy current_phase events fired by /card/next; picker-only
+    sessions had no v2 timing data.
     """
-    _, err = require_session(companion_db, session_id)
+    session, err = require_session(companion_db, session_id)
     if err: return err
     data, err = json_body()
     if err: return err
@@ -912,9 +918,23 @@ def study_set_v2_phase(session_id):
     if err: return err
     if v2_key not in V2_PHASE_KEYS:
         return jsonify({'error': 'unknown v2_phase', 'valid_keys': list(V2_PHASE_KEYS)}), 400
+
+    old_v2 = session.get('v2_phase')
     rowcount = companion_db.update_v2_phase(session_id, v2_key)
     if not rowcount:
         return jsonify({'error': 'session not found'}), 404
+
+    # Fire phase_events for the v2 key so get_phase_time_seconds(v2_key)
+    # returns accurate elapsed. Skip if the picker re-submits the same key
+    # (no-op transition shouldn't pollute the event log).
+    if study_analytics and v2_key != old_v2:
+        try:
+            if old_v2:
+                study_analytics.record_phase_exit(session_id, old_v2)
+            study_analytics.record_phase_enter(session_id, v2_key)
+        except Exception:
+            pass  # event log is observational; never block the picker
+
     return jsonify({
         'ok': True,
         'v2_phase': v2_key,

@@ -228,16 +228,23 @@ def stream_study_response(session_id, user_message, db, analytics=None,
                                         session_decision_store=_sd)
 
     # Elapsed-in-phase fuels the per-phase time gauge in the active-focus
-    # block. phase_events is keyed by the legacy current_phase (since the
-    # v2 picker doesn't yet fire events), so use that as the lookup key.
-    # Degrades to 0 cleanly when no analytics or no events recorded yet.
+    # block. Picker changes fire phase_events keyed by the v2 key, and
+    # /card/next fires events keyed by the legacy current_phase. Look up
+    # by the v2 key first (the picker is the more recent signal), fall
+    # back to legacy if no v2 events have accumulated yet.
     elapsed_in_phase = 0
-    if analytics and session.get('current_phase'):
+    if analytics:
         try:
-            elapsed_in_phase = int(analytics.get_phase_time_seconds(
-                session_id, session['current_phase']))
+            elapsed_in_phase = int(
+                analytics.get_phase_time_seconds(session_id, v2_phase_row.key))
         except Exception:
             elapsed_in_phase = 0
+        if elapsed_in_phase == 0 and session.get('current_phase'):
+            try:
+                elapsed_in_phase = int(
+                    analytics.get_phase_time_seconds(session_id, session['current_phase']))
+            except Exception:
+                elapsed_in_phase = 0
 
     system_prompt = select_persona_prompt(
         persona=persona,
