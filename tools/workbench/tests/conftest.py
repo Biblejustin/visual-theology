@@ -29,15 +29,20 @@ def _port_in_use(port):
 
 @pytest.fixture(scope="session")
 def base_url():
-    """Start Flask server as subprocess, yield base URL, kill on teardown."""
+    """Start Flask server as subprocess on a kernel-assigned free port,
+    yield base URL, kill on teardown.
 
-    # Safety: skip E2E tests if dev server is running (LogosReader native lib contention).
-    # Yield None to keep non-E2E (unit/integration) tests running — pytest-base-url's
-    # autouse _verify_url checks `if base_url and verify:` and no-ops when base_url is None.
-    if _port_in_use(5111):
-        yield None
-        return
+    Previously short-circuited to None when port 5111 was busy (the live
+    PM2 dev server's port), causing 22 E2E tests to skip. The
+    LogosReader native lib is read-only against the Logos files and
+    happily co-exists with the desktop app + PM2, so concurrent test
+    + live operation is safe. _free_port() asks the kernel for any
+    available port — never collides with 5111.
 
+    If the subprocess does fail to start (e.g. unrelated cause), the
+    15-second health check below surfaces stderr clearly. Tests then
+    error rather than silently skip, which is what we want.
+    """
     # Create temp DB
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
