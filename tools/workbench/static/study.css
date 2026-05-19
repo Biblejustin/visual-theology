@@ -53,7 +53,17 @@
 /* ── Base ────────────────────────────────────────────────────────────────── */
 
 html, body {
-    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+/* Only the session page locks scrolling — it manages its own internal
+ * flex-column scrolling. Other pages that load study.css (start, future
+ * additions) need natural page scrolling so long session lists / outlines
+ * can grow past the viewport. study_session.html opts in via the
+ * .session-layout class on body. */
+body.session-layout {
+    height: 100vh;
     overflow: hidden;
 }
 
@@ -1626,17 +1636,14 @@ body {
     --card-max-w: 100%;
   }
 
-  /* Critical: desktop locks html/body to viewport height + overflow:hidden
-   * because the desktop layout manages its own internal scrolling inside
-   * fixed-height flex columns. On phones we need native page scrolling so
-   * the session list, outline, and conversation can grow past viewport.
-   * Without these overrides, /study/ can't reach older sessions below the
-   * fold. */
-  html, body {
+  /* Mobile: session page also opts out of the height-lock so the
+   * conversation + outline can grow past viewport with native page
+   * scrolling. (Non-session pages already scroll naturally — they
+   * don't carry .session-layout.) */
+  body.session-layout {
     height: auto;
-    min-height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
+    min-height: 100vh;
+    overflow: visible;
     -webkit-overflow-scrolling: touch;
   }
   #study-app {
