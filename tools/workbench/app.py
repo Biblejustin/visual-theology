@@ -83,6 +83,9 @@ from genre_map import get_genre
 from seed_questions import seed_question_bank
 from series_planner import propose_series_plan
 from app_secrets import sermonaudio_api_key, sermonaudio_broadcaster_id, anthropic_api_key
+from validators import (
+    parse_int_arg, json_body, require_string, require_session,
+)
 
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
@@ -468,8 +471,9 @@ def api_create_project():
 def api_update_phase(project_id):
     # Accept either form or JSON. silent=True so non-JSON bodies don't 415
     # before our validation runs (bug review #1).
-    json_data = request.get_json(silent=True) or {}
-    phase = request.form.get("phase") or json_data.get("phase")
+    data, err = json_body()
+    if err: return err
+    phase = request.form.get("phase") or data.get("phase")
     if not phase:
         return jsonify({"error": "phase required"}), 400
     db.update_project_phase(project_id, phase)
@@ -488,7 +492,8 @@ def api_delete_project(project_id):
 def api_chat():
     # silent=True so a non-JSON body returns our 400 instead of Flask's 415
     # (bug review #1). Coerce to {} so .get calls are safe.
-    data = request.get_json(silent=True) or {}
+    data, err = json_body()
+    if err: return err
     project_id = data.get("project_id")
     message = (data.get("message") or "").strip()
     model = data.get("model", "claude-haiku-4-5-20251001")
@@ -630,12 +635,8 @@ def api_library_search():
 
     query = request.args.get("q", "").strip()
     rtype = request.args.get("type", "all")
-    # Bug review #2: int() crashed on ?limit=x. Validate + clamp.
-    try:
-        limit = int(request.args.get("limit", "50"))
-    except (TypeError, ValueError):
-        limit = 50
-    limit = max(1, min(limit, 200))
+    # Bug review #2: int() crashed on ?limit=x. Validators handle this.
+    limit = parse_int_arg("limit", default=50, lo=1, hi=200)
 
     if not query and rtype == "all":
         return render_template("partials/library_results.html", results=[], query="")
@@ -949,11 +950,10 @@ def companion_phase_next(session_id):
 @app.route("/companion/session/<int:session_id>/discuss", methods=["POST"])
 def companion_discuss(session_id):
     """Stream a discussion response via SSE."""
-    data = request.get_json(silent=True) or {}
-    message = data.get("message", "").strip()
-
-    if not message:
-        return jsonify({"error": "message required"}), 400
+    data, err = json_body()
+    if err: return err
+    message, err = require_string(data, "message", min_length=1)
+    if err: return err
 
     return Response(
         stream_companion_response(session_id, message, companion_db, accuser=accuser_detector),
@@ -1258,11 +1258,7 @@ def study_patterns():
         accuser_category_summary, accuser_recent_examples,
         recent_session_activity, decision_velocity_by_session,
     )
-    try:
-        days = int(request.args.get('days', 30))
-    except (TypeError, ValueError):
-        days = 30
-    days = max(1, min(days, 365))
+    days = parse_int_arg('days', default=30, lo=1, hi=365)
     cutoffs = cutoff_summary(study_analytics, days=days) if study_analytics else []
     dismiss_rate = cutoff_recent_dismissed_rate(study_analytics, days=days) if study_analytics else 0.0
     accuser_cats = accuser_category_summary(accuser_detector, days=days) if accuser_detector else []
@@ -1579,9 +1575,8 @@ def study_transcribe(session_id):
     (better model, manual review, or listen back to a prayer he didn't want
     transcribed at all). Storage is on the External drive; never uploaded.
     """
-    session = companion_db.get_session(session_id)
-    if not session:
-        return jsonify({"error": "session not found"}), 404
+    session, err = require_session(companion_db, session_id)
+    if err: return err
 
     audio_file = request.files.get("audio")
     if audio_file is None:
@@ -1689,14 +1684,13 @@ def study_word_info(session_id):
     Looks up BDAG/BDB/HALOT from the library for glosses.
     Falls back to Claude Haiku only as last resort.
     """
-    data = request.get_json(silent=True) or {}
-    word = data.get("word", "").strip()
-    if not word:
-        return jsonify({"error": "word required"}), 400
+    data, err = json_body()
+    if err: return err
+    word, err = require_string(data, "word", min_length=1)
+    if err: return err
 
-    session = companion_db.get_session(session_id)
-    if not session:
-        return jsonify({"error": "session not found"}), 404
+    session, err = require_session(companion_db, session_id)
+    if err: return err
 
     book = session.get("book", 66)
     is_nt = book >= 40
@@ -1763,9 +1757,10 @@ def study_word_info(session_id):
 def study_annotate(session_id):
     """Save a star annotation from the study bible card."""
     # Bug review #1 + #4: silent JSON + session existence check
-    if not companion_db.get_session(session_id):
-        return jsonify({"error": "session not found"}), 404
-    data = request.get_json(silent=True) or {}
+    _, err = require_session(companion_db, session_id)
+    if err: return err
+    data, err = json_body()
+    if err: return err
     aid = companion_db.save_card_annotation(
         session_id, phase="study_bibles",
         source=data.get("source", ""),
@@ -1778,9 +1773,10 @@ def study_annotate(session_id):
 def study_notepad(session_id):
     """Save notepad content for the current phase."""
     # Bug review #1 + #4: silent JSON + session existence check
-    if not companion_db.get_session(session_id):
-        return jsonify({"error": "session not found"}), 404
-    data = request.get_json(silent=True) or {}
+    _, err = require_session(companion_db, session_id)
+    if err: return err
+    data, err = json_body()
+    if err: return err
     companion_db.save_card_notepad(session_id, phase=data.get("phase", "study_bibles"),
                                    content=data.get("content", ""))
     return jsonify({"ok": True})
