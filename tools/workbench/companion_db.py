@@ -742,12 +742,70 @@ class CompanionDB:
         session_id (returns 0). Caller is responsible for validating
         that v2_phase is a known key; we don't gate that here so
         backfill scripts can write whatever the v2_phases module knows.
+
+        NOTE: Prefer transition_v2_phase() in user-facing flows — it's
+        race-safe (single transaction) and logs phase_events atomically.
+        update_v2_phase remains for the backfill script.
         """
         with self._safe_write() as conn:
             cur = conn.execute(
                 "UPDATE sessions SET v2_phase = ?, updated_at = ? WHERE id = ?",
                 (v2_phase, self._now(), session_id))
             return cur.rowcount
+
+    def transition_v2_phase(self, session_id, v2_phase):
+        """Atomic v2-phase transition: SELECT old + conditional UPDATE +
+        log exit/enter events, all inside a single BEGIN IMMEDIATE
+        transaction. This is the concurrency-safe path for the picker
+        endpoint — two simultaneous requests will serialize on the
+        writer lock so phase_events stay balanced.
+
+        Returns (status, old_v2_phase):
+          ('missing', None)   — session row doesn't exist
+          ('no_change', None) — session exists but already at v2_phase
+          ('changed', old)    — transitioned, events logged
+
+        phase_events is in the same SQLite database (companion.db), so
+        we can write to it from this connection without a second store.
+        """
+        conn = self._conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE")  # writer lock → serializes concurrent calls
+            row = conn.execute(
+                "SELECT v2_phase FROM sessions WHERE id = ?",
+                (session_id,)
+            ).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                return ('missing', None)
+            old = row['v2_phase']
+            if old == v2_phase:
+                conn.execute("ROLLBACK")
+                return ('no_change', None)
+            now = self._now()
+            conn.execute(
+                "UPDATE sessions SET v2_phase = ?, updated_at = ? WHERE id = ?",
+                (v2_phase, now, session_id))
+            # Log the exit/enter events under the same transaction so a
+            # crash between them can't leave the log unbalanced. phase_events
+            # table is owned by session_analytics but lives in the same DB.
+            if old:
+                conn.execute(
+                    "INSERT INTO phase_events (session_id, phase, event_type, timestamp) "
+                    "VALUES (?, ?, 'exit', ?)",
+                    (session_id, old, now))
+            conn.execute(
+                "INSERT INTO phase_events (session_id, phase, event_type, timestamp) "
+                "VALUES (?, ?, 'enter', ?)",
+                (session_id, v2_phase, now))
+            conn.execute("COMMIT")
+            return ('changed', old)
+        except Exception:
+            try: conn.execute("ROLLBACK")
+            except Exception: pass
+            raise
+        finally:
+            conn.close()
 
     def save_card_response(self, session_id, phase, question_id, content):
         now = self._now()

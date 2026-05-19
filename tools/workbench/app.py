@@ -860,11 +860,17 @@ def study_session_view(session_id):
         # Annotations + study-bible notepad stay per-child.
         annotations = companion_db.get_card_annotations(session_id, phase) if phase == "study_bibles" else []
         notepad = companion_db.get_card_notepad(session_id, phase) if phase == "study_bibles" else ""
-        from phase_cluster_router import persona_for_phase as _persona_for_phase
+        from phase_cluster_router import persona_for_v2_phase as _persona_for_v2
+        from v2_phases import resolve_v2_phase as _resolve_v2
         from time_coach import assess_session as _tc_assess, week_context as _tc_week, prep_window_position as _tc_horizon
+        # Use the v2 phase as the source of truth for persona display, so
+        # the header stays consistent with what the agent actually uses.
+        # Falls back to legacy mapping when picker hasn't been touched.
+        _v2_row = _resolve_v2(session.get('v2_phase'), session.get('current_phase'))
+        _resolved_persona = _persona_for_v2(_v2_row.key)
         return render_template("study_session.html",
                                session=session, mode="card",
-                               persona=_persona_for_phase(phase),
+                               persona=_resolved_persona,
                                time_coach=_tc_assess(companion_db, study_analytics, session_id),
                                time_coach_week=_tc_week(companion_db, study_analytics),
                                horizon=_tc_horizon(),
@@ -886,13 +892,19 @@ def study_session_view(session_id):
     else:
         # Conversation mode (phase 6+)
         messages = companion_db.get_messages(session_id, limit=200)
-        from phase_cluster_router import persona_for_phase as _persona_for_phase
+        from phase_cluster_router import persona_for_v2_phase as _persona_for_v2
+        from v2_phases import resolve_v2_phase as _resolve_v2
         from time_coach import assess_session as _tc_assess, week_context as _tc_week, prep_window_position as _tc_horizon
+        # Use the v2 phase as the source of truth for persona display, so
+        # the header stays consistent with what the agent actually uses.
+        # Falls back to legacy mapping when picker hasn't been touched.
+        _v2_row = _resolve_v2(session.get('v2_phase'), session.get('current_phase'))
+        _resolved_persona = _persona_for_v2(_v2_row.key)
         committed_decisions = session_decisions.list_decisions(session_id) if session_decisions else []
         open_decision_keys_list = session_decisions.open_decision_keys(session_id) if session_decisions else []
         return render_template("study_session.html",
                                session=session, mode="conversation",
-                               persona=_persona_for_phase(phase),
+                               persona=_resolved_persona,
                                time_coach=_tc_assess(companion_db, study_analytics, session_id),
                                time_coach_week=_tc_week(companion_db, study_analytics),
                                horizon=_tc_horizon(),
@@ -939,21 +951,14 @@ def study_set_v2_phase(session_id):
     if v2_key not in V2_PHASE_KEYS:
         return jsonify({'error': 'unknown v2_phase', 'valid_keys': list(V2_PHASE_KEYS)}), 400
 
-    old_v2 = session.get('v2_phase')
-    rowcount = companion_db.update_v2_phase(session_id, v2_key)
-    if not rowcount:
+    # Atomic transition: writer-locked transaction wraps SELECT old +
+    # conditional UPDATE + exit/enter event inserts. The 60-rapid-changes
+    # stress test that produced 7 enters / 5 exits on the old non-atomic
+    # path is no longer possible — concurrent calls serialize through
+    # BEGIN IMMEDIATE so phase_events stay balanced.
+    status, _old_v2 = companion_db.transition_v2_phase(session_id, v2_key)
+    if status == 'missing':
         return jsonify({'error': 'session not found'}), 404
-
-    # Fire phase_events for the v2 key so get_phase_time_seconds(v2_key)
-    # returns accurate elapsed. Skip if the picker re-submits the same key
-    # (no-op transition shouldn't pollute the event log).
-    if study_analytics and v2_key != old_v2:
-        try:
-            if old_v2:
-                study_analytics.record_phase_exit(session_id, old_v2)
-            study_analytics.record_phase_enter(session_id, v2_key)
-        except Exception:
-            pass  # event log is observational; never block the picker
 
     return jsonify({
         'ok': True,
@@ -1321,7 +1326,11 @@ def study_notepad(session_id):
 
 @app.route("/study/session/<int:session_id>/outline")
 def study_outline(session_id):
-    """Return outline tree as JSON."""
+    """Return outline tree as JSON. 404 if session doesn't exist —
+    previously returned 200 [], which masked broken client state
+    (the rest of the session-write routes 404 correctly)."""
+    _, err = require_session(companion_db, session_id)
+    if err: return err
     tree = companion_db.get_outline_tree(session_id)
     return jsonify(tree)
 

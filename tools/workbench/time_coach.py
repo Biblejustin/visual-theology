@@ -219,9 +219,29 @@ def assess_session(companion_db, study_analytics, session_id):
     session = companion_db.get_session(session_id)
     if not session:
         return None
-    phase = session['current_phase']
-    budget = PHASE_TIMERS.get(phase)
-    time_in_phase = _seconds_in_current_phase(study_analytics, session_id, phase)
+
+    # Two paths:
+    #   - Sessions where the v2 picker has been touched (v2_phase NOT NULL):
+    #     use v2 metadata for budget + phase_events keyed by the v2 key.
+    #   - Legacy / pre-picker sessions: stay on the original current_phase
+    #     path so the existing budget semantics + tests still hold.
+    explicit_v2 = session.get('v2_phase')
+    if explicit_v2:
+        from v2_phases import get_phase as get_v2_phase
+        v2_row = get_v2_phase(explicit_v2)
+        phase = v2_row.key if v2_row else explicit_v2
+        budget = (v2_row.budget_min * 60) if (v2_row and v2_row.budget_min) else None
+        time_in_phase = _seconds_in_current_phase(study_analytics, session_id, phase)
+        # If v2 events haven't accumulated yet, fall back to legacy elapsed
+        # so the Time Coach has SOMETHING to show during the first session
+        # after the picker fires.
+        if time_in_phase == 0 and session.get('current_phase'):
+            time_in_phase = _seconds_in_current_phase(
+                study_analytics, session_id, session['current_phase'])
+    else:
+        phase = session['current_phase']
+        budget = PHASE_TIMERS.get(phase)
+        time_in_phase = _seconds_in_current_phase(study_analytics, session_id, phase)
     state = _budget_state(time_in_phase, budget)
     total_elapsed = int(session.get('total_elapsed_seconds') or 0)
     sermon_elapsed = _accumulate_sermon_elapsed(companion_db, session)
