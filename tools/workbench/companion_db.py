@@ -774,25 +774,30 @@ class CompanionDB:
     def add_outline_node(self, session_id, node_type, content, parent_id=None,
                          verse_ref=None, rank=0, flags=None, source_type=None, source_id=None):
         conn = self._conn()
-        now = self._now()
-        if rank == 0 and parent_id is not None:
-            row = conn.execute("SELECT MAX(rank) as max_rank FROM outline_nodes WHERE session_id = ? AND parent_id = ?",
-                               (session_id, parent_id)).fetchone()
-            rank = (row['max_rank'] or 0) + 1
-        elif rank == 0 and parent_id is None:
-            row = conn.execute("SELECT MAX(rank) as max_rank FROM outline_nodes WHERE session_id = ? AND parent_id IS NULL",
-                               (session_id,)).fetchone()
-            rank = (row['max_rank'] or 0) + 1
-        cur = conn.execute("""
-            INSERT INTO outline_nodes (session_id, parent_id, type, content, verse_ref, rank,
-                                       flags, source_type, source_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (session_id, parent_id, node_type, content, verse_ref, rank,
-              json.dumps(flags or {}), source_type, source_id, now, now))
-        conn.commit()
-        nid = cur.lastrowid
-        conn.close()
-        return nid
+        try:
+            now = self._now()
+            if rank == 0 and parent_id is not None:
+                row = conn.execute("SELECT MAX(rank) as max_rank FROM outline_nodes WHERE session_id = ? AND parent_id = ?",
+                                   (session_id, parent_id)).fetchone()
+                rank = (row['max_rank'] or 0) + 1
+            elif rank == 0 and parent_id is None:
+                row = conn.execute("SELECT MAX(rank) as max_rank FROM outline_nodes WHERE session_id = ? AND parent_id IS NULL",
+                                   (session_id,)).fetchone()
+                rank = (row['max_rank'] or 0) + 1
+            cur = conn.execute("""
+                INSERT INTO outline_nodes (session_id, parent_id, type, content, verse_ref, rank,
+                                           flags, source_type, source_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (session_id, parent_id, node_type, content, verse_ref, rank,
+                  json.dumps(flags or {}), source_type, source_id, now, now))
+            conn.commit()
+            return cur.lastrowid
+        except Exception:
+            try: conn.rollback()
+            except Exception: pass
+            raise
+        finally:
+            conn.close()
 
     def get_outline_tree(self, session_id):
         conn = self._conn()
@@ -938,13 +943,18 @@ class CompanionDB:
 
     def save_card_annotation(self, session_id, phase, source, starred_text, note=""):
         conn = self._conn()
-        cur = conn.execute(
-            "INSERT INTO card_annotations (session_id, phase, source, starred_text, note) VALUES (?, ?, ?, ?, ?)",
-            (session_id, phase, source, starred_text, note))
-        conn.commit()
-        aid = cur.lastrowid
-        conn.close()
-        return aid
+        try:
+            cur = conn.execute(
+                "INSERT INTO card_annotations (session_id, phase, source, starred_text, note) VALUES (?, ?, ?, ?, ?)",
+                (session_id, phase, source, starred_text, note))
+            conn.commit()
+            return cur.lastrowid
+        except Exception:
+            try: conn.rollback()
+            except Exception: pass
+            raise
+        finally:
+            conn.close()
 
     def get_card_annotations(self, session_id, phase=None):
         conn = self._conn()
@@ -961,11 +971,17 @@ class CompanionDB:
 
     def save_card_notepad(self, session_id, phase, content):
         conn = self._conn()
-        conn.execute(
-            "INSERT INTO card_notepads (session_id, phase, content) VALUES (?, ?, ?) ON CONFLICT(session_id, phase) DO UPDATE SET content = ?, updated_at = datetime('now')",
-            (session_id, phase, content, content))
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute(
+                "INSERT INTO card_notepads (session_id, phase, content) VALUES (?, ?, ?) ON CONFLICT(session_id, phase) DO UPDATE SET content = ?, updated_at = datetime('now')",
+                (session_id, phase, content, content))
+            conn.commit()
+        except Exception:
+            try: conn.rollback()
+            except Exception: pass
+            raise
+        finally:
+            conn.close()
 
     def get_card_notepad(self, session_id, phase):
         conn = self._conn()
