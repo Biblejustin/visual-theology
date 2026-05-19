@@ -144,16 +144,24 @@ var studyClock = {
 
     updateDisplay: function() {
         var el = document.getElementById('session-clock');
-        if (!el) return;
-        var text = this.formatDuration(this.elapsed);
-        if (this.paused) {
-            if (this.autoPausedReason === 'tab_hidden') text += ' (auto-paused: tab hidden)';
-            else if (this.autoPausedReason === 'idle') text += ' (auto-paused: idle)';
-            else text += ' (paused)';
+        if (el) {
+            var text = this.formatDuration(this.elapsed);
+            if (this.paused) {
+                if (this.autoPausedReason === 'tab_hidden') text += ' (auto-paused: tab hidden)';
+                else if (this.autoPausedReason === 'idle') text += ' (auto-paused: idle)';
+                else text += ' (paused)';
+            }
+            el.textContent = text;
+            el.classList.toggle('paused', this.paused);
+            el.classList.toggle('auto-paused', !!this.autoPausedReason);
         }
-        el.textContent = text;
-        el.classList.toggle('paused', this.paused);
-        el.classList.toggle('auto-paused', !!this.autoPausedReason);
+        // Broadcast clock state on <body> so the time-coach rings can dim/mute.
+        if (this.paused) {
+            var suffix = this.autoPausedReason || 'manual';
+            document.body.dataset.clockState = 'paused-' + suffix;
+        } else {
+            delete document.body.dataset.clockState;
+        }
     },
 
     formatDuration: function(totalSeconds) {
