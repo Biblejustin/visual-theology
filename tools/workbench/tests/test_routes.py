@@ -49,6 +49,18 @@ def client():
     os.unlink(tmp.name)
 
 
+def test_study_patterns_handles_garbage_days_param(client):
+    """Per bug review #2 — invalid days param previously crashed (500)."""
+    r = client.get('/study/patterns?days=x')
+    assert r.status_code == 200
+    r = client.get('/study/patterns?days=-50')
+    assert r.status_code == 200
+    r = client.get('/study/patterns?days=99999')
+    assert r.status_code == 200
+    r = client.get('/study/patterns?days=')
+    assert r.status_code == 200
+
+
 def _make_session(client, passage='Romans 1:18-23'):
     """Helper: POST /companion/session/new and return (session_id, location)."""
     r = client.post('/companion/session/new', data={'passage': passage})

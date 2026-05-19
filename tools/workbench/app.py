@@ -1223,7 +1223,11 @@ def study_patterns():
         accuser_category_summary, accuser_recent_examples,
         recent_session_activity, decision_velocity_by_session,
     )
-    days = int(request.args.get('days', 30))
+    try:
+        days = int(request.args.get('days', 30))
+    except (TypeError, ValueError):
+        days = 30
+    days = max(1, min(days, 365))
     cutoffs = cutoff_summary(study_analytics, days=days) if study_analytics else []
     dismiss_rate = cutoff_recent_dismissed_rate(study_analytics, days=days) if study_analytics else 0.0
     accuser_cats = accuser_category_summary(accuser_detector, days=days) if accuser_detector else []
