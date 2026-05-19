@@ -1626,6 +1626,30 @@ body {
     --card-max-w: 100%;
   }
 
+  /* Critical: desktop locks html/body to viewport height + overflow:hidden
+   * because the desktop layout manages its own internal scrolling inside
+   * fixed-height flex columns. On phones we need native page scrolling so
+   * the session list, outline, and conversation can grow past viewport.
+   * Without these overrides, /study/ can't reach older sessions below the
+   * fold. */
+  html, body {
+    height: auto;
+    min-height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+  #study-app {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+  #study-main { overflow: visible; }
+  #study-content-row { overflow: visible; flex-direction: column; }
+  #card-area,
+  #conversation-thread,
+  #outline-column { overflow: visible; }
+
   /* Topbar: collapse non-essential bits, keep clock + passage visible */
   #study-topbar {
     padding: 8px 12px;
