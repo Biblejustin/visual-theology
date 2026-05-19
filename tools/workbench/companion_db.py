@@ -1,5 +1,6 @@
 import sqlite3
 import json
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 PHASE_TIMERS = {
@@ -29,6 +30,39 @@ class CompanionDB:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
+
+    @contextmanager
+    def _safe_write(self):
+        """Connection context manager for write paths.
+
+        Polish #3 (project assessment). Replaces the
+        try/except/rollback/finally boilerplate that was applied
+        unevenly across write helpers — some had it (post bug review
+        #5), some didn't, some had rollback but no close discipline.
+
+        Usage:
+            with self._safe_write() as conn:
+                conn.execute("INSERT ...", (...))
+                return cur.lastrowid    # commit on normal exit
+                                        # rollback on exception
+                                        # close always
+
+        Read helpers can stay as plain try/finally — bug review #5
+        only flagged the write path because that's where rollbacks
+        matter and connection leaks block subsequent writers.
+        """
+        conn = self._conn()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
 
     def init_db(self):
         conn = self._conn()
@@ -502,18 +536,15 @@ class CompanionDB:
         return datetime.now(timezone.utc).isoformat()
 
     def create_session(self, passage_ref, book, chapter, verse_start, verse_end, genre):
-        conn = self._conn()
         now = self._now()
-        cur = conn.execute("""
-            INSERT INTO sessions (passage_ref, book, chapter, verse_start, verse_end, genre,
-                                  current_phase, timer_remaining_seconds, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'prayer', ?, ?, ?)
-        """, (passage_ref, book, chapter, verse_start, verse_end, genre,
-              PHASE_TIMERS['prayer'], now, now))
-        conn.commit()
-        sid = cur.lastrowid
-        conn.close()
-        return sid
+        with self._safe_write() as conn:
+            cur = conn.execute("""
+                INSERT INTO sessions (passage_ref, book, chapter, verse_start, verse_end, genre,
+                                      current_phase, timer_remaining_seconds, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'prayer', ?, ?, ?)
+            """, (passage_ref, book, chapter, verse_start, verse_end, genre,
+                  PHASE_TIMERS['prayer'], now, now))
+            return cur.lastrowid
 
     def get_session(self, session_id):
         conn = self._conn()
@@ -581,10 +612,7 @@ class CompanionDB:
     def save_insight(self, *, session_id, kind, title, body, citations,
                      confidence, metadata, source_tool):
         """Insert a homiletics_insights row. Returns the new row id."""
-        import json
-        from datetime import datetime, timezone
-        conn = self._conn()
-        try:
+        with self._safe_write() as conn:
             cur = conn.execute(
                 "INSERT INTO homiletics_insights "
                 "(session_id, kind, title, body, citations, confidence, metadata, "
@@ -594,13 +622,10 @@ class CompanionDB:
                  json.dumps(citations or []),
                  float(confidence),
                  json.dumps(metadata or {}),
-                 datetime.now(timezone.utc).isoformat(),
+                 self._now(),
                  source_tool),
             )
-            conn.commit()
             return cur.lastrowid
-        finally:
-            conn.close()
 
     def get_insights(self, session_id, kind=None):
         """Return homiletics_insights rows for a session, optionally filtered by kind.
@@ -629,10 +654,8 @@ class CompanionDB:
                               vector, model):
         """Insert/replace a claim_embeddings row. Vector is packed as float32 bytes."""
         import struct
-        from datetime import datetime, timezone
         blob = struct.pack(f'{len(vector)}f', *vector)
-        conn = self._conn()
-        try:
+        with self._safe_write() as conn:
             cur = conn.execute(
                 "INSERT INTO claim_embeddings "
                 "(source_kind, source_id, claim_text, embedding, embedding_model, created_at) "
@@ -642,12 +665,9 @@ class CompanionDB:
                 "  embedding = excluded.embedding, "
                 "  created_at = excluded.created_at",
                 (source_kind, source_id, claim_text, blob, model,
-                 datetime.now(timezone.utc).isoformat()),
+                 self._now()),
             )
-            conn.commit()
             return cur.lastrowid
-        finally:
-            conn.close()
 
     def get_claim_embeddings(self, *, source_kind, model, source_ids=None):
         """Return claim_embeddings rows with the vector unpacked to list[float].
@@ -702,31 +722,26 @@ class CompanionDB:
     def update_phase(self, session_id, phase, timer_seconds=None):
         if timer_seconds is None:
             timer_seconds = PHASE_TIMERS.get(phase, 1800)
-        conn = self._conn()
-        conn.execute("""
-            UPDATE sessions SET current_phase = ?, timer_remaining_seconds = ?,
-                               timer_paused = 0, updated_at = ?
-            WHERE id = ?
-        """, (phase, timer_seconds, self._now(), session_id))
-        conn.commit()
-        conn.close()
+        with self._safe_write() as conn:
+            conn.execute("""
+                UPDATE sessions SET current_phase = ?, timer_remaining_seconds = ?,
+                                   timer_paused = 0, updated_at = ?
+                WHERE id = ?
+            """, (phase, timer_seconds, self._now(), session_id))
 
     def save_card_response(self, session_id, phase, question_id, content):
-        conn = self._conn()
         now = self._now()
-        cur = conn.execute("""
-            INSERT INTO card_responses (session_id, phase, question_id, content, created_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (session_id, phase, question_id, content, now))
-        if phase in ('exegetical_point', 'fcf_homiletical', 'sermon_construction', 'edit_pray'):
-            conn.execute(
-                "UPDATE sessions SET last_homiletical_activity_at = ?, updated_at = ? WHERE id = ?",
-                (now, now, session_id),
-            )
-        conn.commit()
-        rid = cur.lastrowid
-        conn.close()
-        return rid
+        with self._safe_write() as conn:
+            cur = conn.execute("""
+                INSERT INTO card_responses (session_id, phase, question_id, content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (session_id, phase, question_id, content, now))
+            if phase in ('exegetical_point', 'fcf_homiletical', 'sermon_construction', 'edit_pray'):
+                conn.execute(
+                    "UPDATE sessions SET last_homiletical_activity_at = ?, updated_at = ? WHERE id = ?",
+                    (now, now, session_id),
+                )
+            return cur.lastrowid
 
     def get_card_responses(self, session_id, phase=None):
         conn = self._conn()
@@ -738,21 +753,18 @@ class CompanionDB:
         return [dict(r) for r in rows]
 
     def save_message(self, session_id, phase, role, content, tool_name=None, tool_input=None):
-        conn = self._conn()
         now = self._now()
-        cur = conn.execute("""
-            INSERT INTO conversation_messages (session_id, phase, role, content, tool_name, tool_input, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (session_id, phase, role, content, tool_name, tool_input, now))
-        if phase in ('exegetical_point', 'fcf_homiletical', 'sermon_construction', 'edit_pray'):
-            conn.execute(
-                "UPDATE sessions SET last_homiletical_activity_at = ?, updated_at = ? WHERE id = ?",
-                (now, now, session_id),
-            )
-        conn.commit()
-        mid = cur.lastrowid
-        conn.close()
-        return mid
+        with self._safe_write() as conn:
+            cur = conn.execute("""
+                INSERT INTO conversation_messages (session_id, phase, role, content, tool_name, tool_input, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (session_id, phase, role, content, tool_name, tool_input, now))
+            if phase in ('exegetical_point', 'fcf_homiletical', 'sermon_construction', 'edit_pray'):
+                conn.execute(
+                    "UPDATE sessions SET last_homiletical_activity_at = ?, updated_at = ? WHERE id = ?",
+                    (now, now, session_id),
+                )
+            return cur.lastrowid
 
     def get_messages(self, session_id, phase=None, limit=50):
         conn = self._conn()
@@ -773,9 +785,8 @@ class CompanionDB:
 
     def add_outline_node(self, session_id, node_type, content, parent_id=None,
                          verse_ref=None, rank=0, flags=None, source_type=None, source_id=None):
-        conn = self._conn()
-        try:
-            now = self._now()
+        now = self._now()
+        with self._safe_write() as conn:
             if rank == 0 and parent_id is not None:
                 row = conn.execute("SELECT MAX(rank) as max_rank FROM outline_nodes WHERE session_id = ? AND parent_id = ?",
                                    (session_id, parent_id)).fetchone()
@@ -790,14 +801,7 @@ class CompanionDB:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (session_id, parent_id, node_type, content, verse_ref, rank,
                   json.dumps(flags or {}), source_type, source_id, now, now))
-            conn.commit()
             return cur.lastrowid
-        except Exception:
-            try: conn.rollback()
-            except Exception: pass
-            raise
-        finally:
-            conn.close()
 
     def get_outline_tree(self, session_id):
         conn = self._conn()
@@ -823,61 +827,43 @@ class CompanionDB:
 
     def update_outline_node(self, node_id, content=None, node_type=None, rank=None, flags=None):
         """Returns affected row count so callers can detect missing-id no-ops."""
-        conn = self._conn()
-        try:
-            updates = []
-            params = []
-            if content is not None:
-                updates.append("content = ?")
-                params.append(content)
-            if node_type is not None:
-                updates.append("type = ?")
-                params.append(node_type)
-            if rank is not None:
-                updates.append("rank = ?")
-                params.append(rank)
-            if flags is not None:
-                updates.append("flags = ?")
-                params.append(json.dumps(flags))
-            updates.append("updated_at = ?")
-            params.append(self._now())
-            params.append(node_id)
+        updates = []
+        params = []
+        if content is not None:
+            updates.append("content = ?")
+            params.append(content)
+        if node_type is not None:
+            updates.append("type = ?")
+            params.append(node_type)
+        if rank is not None:
+            updates.append("rank = ?")
+            params.append(rank)
+        if flags is not None:
+            updates.append("flags = ?")
+            params.append(json.dumps(flags))
+        updates.append("updated_at = ?")
+        params.append(self._now())
+        params.append(node_id)
+        with self._safe_write() as conn:
             cur = conn.execute(
                 f"UPDATE outline_nodes SET {', '.join(updates)} WHERE id = ?", params)
-            conn.commit()
             return cur.rowcount
-        except Exception:
-            try: conn.rollback()
-            except Exception: pass
-            raise
-        finally:
-            conn.close()
 
     def delete_outline_node(self, node_id):
         """Returns affected row count for the node itself (children cascade)."""
-        conn = self._conn()
-        try:
+        with self._safe_write() as conn:
             conn.execute("DELETE FROM outline_nodes WHERE parent_id = ?", (node_id,))
             cur = conn.execute("DELETE FROM outline_nodes WHERE id = ?", (node_id,))
-            conn.commit()
             return cur.rowcount
-        except Exception:
-            try: conn.rollback()
-            except Exception: pass
-            raise
-        finally:
-            conn.close()
 
     def delete_session(self, session_id):
-        conn = self._conn()
-        conn.execute("DELETE FROM card_notepads WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM card_annotations WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM outline_nodes WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM conversation_messages WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM card_responses WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-        conn.commit()
-        conn.close()
+        with self._safe_write() as conn:
+            conn.execute("DELETE FROM card_notepads WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM card_annotations WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM outline_nodes WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM conversation_messages WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM card_responses WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
 
     def get_questions(self, phase, genre=None, priority=None):
         conn = self._conn()
@@ -910,18 +896,15 @@ class CompanionDB:
         re-run later (better model, manual transcription, or simply
         listened back as a prayer he didn't want transcribed at all).
         """
-        conn = self._conn()
-        cur = conn.execute("""
-            INSERT INTO audio_recordings
-                (session_id, phase, file_path, content_type, byte_size,
-                 duration_sec, transcript_excerpt, quality, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (session_id, phase, file_path, content_type, byte_size,
-              duration_sec, transcript_excerpt, quality, self._now()))
-        conn.commit()
-        rid = cur.lastrowid
-        conn.close()
-        return rid
+        with self._safe_write() as conn:
+            cur = conn.execute("""
+                INSERT INTO audio_recordings
+                    (session_id, phase, file_path, content_type, byte_size,
+                     duration_sec, transcript_excerpt, quality, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (session_id, phase, file_path, content_type, byte_size,
+                  duration_sec, transcript_excerpt, quality, self._now()))
+            return cur.lastrowid
 
     def list_audio_recordings(self, session_id, limit=50):
         conn = self._conn()
@@ -935,43 +918,31 @@ class CompanionDB:
         return [dict(r) for r in rows]
 
     def update_timer(self, session_id, remaining_seconds, paused=None, elapsed_delta=0):
-        conn = self._conn()
-        if paused is not None:
-            conn.execute("""
-                UPDATE sessions SET timer_remaining_seconds = ?, timer_paused = ?,
-                       total_elapsed_seconds = total_elapsed_seconds + ?, updated_at = ?
-                WHERE id = ?
-            """, (remaining_seconds, int(paused), elapsed_delta, self._now(), session_id))
-        else:
-            conn.execute("""
-                UPDATE sessions SET timer_remaining_seconds = ?,
-                       total_elapsed_seconds = total_elapsed_seconds + ?, updated_at = ?
-                WHERE id = ?
-            """, (remaining_seconds, elapsed_delta, self._now(), session_id))
-        conn.commit()
-        conn.close()
+        with self._safe_write() as conn:
+            if paused is not None:
+                conn.execute("""
+                    UPDATE sessions SET timer_remaining_seconds = ?, timer_paused = ?,
+                           total_elapsed_seconds = total_elapsed_seconds + ?, updated_at = ?
+                    WHERE id = ?
+                """, (remaining_seconds, int(paused), elapsed_delta, self._now(), session_id))
+            else:
+                conn.execute("""
+                    UPDATE sessions SET timer_remaining_seconds = ?,
+                           total_elapsed_seconds = total_elapsed_seconds + ?, updated_at = ?
+                    WHERE id = ?
+                """, (remaining_seconds, elapsed_delta, self._now(), session_id))
 
     def complete_session(self, session_id):
-        conn = self._conn()
-        conn.execute("UPDATE sessions SET status = 'completed', updated_at = ? WHERE id = ?",
-                     (self._now(), session_id))
-        conn.commit()
-        conn.close()
+        with self._safe_write() as conn:
+            conn.execute("UPDATE sessions SET status = 'completed', updated_at = ? WHERE id = ?",
+                         (self._now(), session_id))
 
     def save_card_annotation(self, session_id, phase, source, starred_text, note=""):
-        conn = self._conn()
-        try:
+        with self._safe_write() as conn:
             cur = conn.execute(
                 "INSERT INTO card_annotations (session_id, phase, source, starred_text, note) VALUES (?, ?, ?, ?, ?)",
                 (session_id, phase, source, starred_text, note))
-            conn.commit()
             return cur.lastrowid
-        except Exception:
-            try: conn.rollback()
-            except Exception: pass
-            raise
-        finally:
-            conn.close()
 
     def get_card_annotations(self, session_id, phase=None):
         conn = self._conn()
@@ -987,18 +958,10 @@ class CompanionDB:
         return [{"id": r[0], "source": r[1], "starred_text": r[2], "note": r[3], "created_at": r[4]} for r in rows]
 
     def save_card_notepad(self, session_id, phase, content):
-        conn = self._conn()
-        try:
+        with self._safe_write() as conn:
             conn.execute(
                 "INSERT INTO card_notepads (session_id, phase, content) VALUES (?, ?, ?) ON CONFLICT(session_id, phase) DO UPDATE SET content = ?, updated_at = datetime('now')",
                 (session_id, phase, content, content))
-            conn.commit()
-        except Exception:
-            try: conn.rollback()
-            except Exception: pass
-            raise
-        finally:
-            conn.close()
 
     def get_card_notepad(self, session_id, phase):
         conn = self._conn()
