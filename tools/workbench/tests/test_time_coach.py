@@ -145,8 +145,7 @@ def test_assess_session_next_action_suggests_phase_advance_when_over(stack):
     conn.commit()
     conn.close()
     out = assess_session(stack['db'], stack['sa'], sid)
-    assert out['next_action']  # non-empty
-    assert 'phase' in out['next_action'].lower() or 'move' in out['next_action'].lower()
+    assert out['next_action']  # non-empty — rotation guarantees some advice fires
 
 
 # ── week_context ──────────────────────────────────────────────────────────
@@ -187,3 +186,30 @@ def test_prep_window_position_color_is_valid():
     from time_coach import prep_window_position
     out = prep_window_position()
     assert out['color'] in ('green', 'amber', 'red', 'lockout', 'muted')
+
+
+# ── Next-action rotation ──────────────────────────────────────────────────
+
+def test_next_action_phrasing_rotates_per_pool_key():
+    """Each pool should have multiple variants so consecutive days differ."""
+    from time_coach import _NEXT_ACTION_POOL
+    for key, variants in _NEXT_ACTION_POOL.items():
+        assert len(variants) >= 2, f"pool {key!r} has only {len(variants)} variant(s); need ≥2 for rotation"
+
+
+def test_next_action_sermon_over_wins_over_phase_over():
+    from time_coach import _next_action, BUDGET_OVER
+    out = _next_action('word_study', BUDGET_OVER, 100, sermon_budget_state=BUDGET_OVER)
+    assert 'sermon' in out.lower() or '13.5h' in out
+
+
+def test_next_action_phase_over_when_sermon_ok():
+    from time_coach import _next_action, BUDGET_OVER, BUDGET_OK
+    out = _next_action('word_study', BUDGET_OVER, 100, sermon_budget_state=BUDGET_OK)
+    assert 'word_study' in out or 'phase' in out.lower()
+
+
+def test_next_action_empty_when_all_ok_and_session_young():
+    from time_coach import _next_action, BUDGET_OK
+    out = _next_action('word_study', BUDGET_OK, 60, sermon_budget_state=BUDGET_OK)
+    assert out == ''

@@ -86,15 +86,69 @@ def _budget_state(time_in_phase, budget):
     return BUDGET_OK
 
 
-def _next_action(phase, budget_state, total_elapsed_sec):
-    """One-line suggestion for what's next. MVP heuristic — refine later."""
+# Next-action phrasing pools, rotated by day-of-year so the strip doesn't
+# habituate (per anti-habituation research: same notification at same time
+# gets filtered out within days for ADHD brains). Each pool keys to a
+# (priority, condition) and provides 3-4 variants. Order in _next_action()
+# determines precedence — most urgent state wins.
+_NEXT_ACTION_POOL = {
+    'sermon_over': [
+        "Past the 13.5h sermon budget. Whatever you have is what you preach.",
+        "Sermon hours exhausted. Time to compose with what's already here.",
+        "Past the sermon budget. Trust the work the Lord gave you this week.",
+    ],
+    'phase_over': [
+        "You're past the {phase} budget. Consider moving on.",
+        "{phase} budget is spent. The next phase is waiting.",
+        "Past {phase} time. Land what's open and advance.",
+    ],
+    'sermon_warn': [
+        "Sermon budget 80% spent. Time to start narrowing.",
+        "Half the sermon hours left. Choose what stays in.",
+        "Sermon budget thinning — Phase 13 is closer than it feels.",
+    ],
+    'phase_warn': [
+        "Approaching the {phase} budget. Wrap this thread soon.",
+        "{phase} budget nearly spent. Bring it to a landing.",
+        "Almost out of {phase} time. One more push, then move.",
+    ],
+    'long_session': [
+        "You've been in this session over 4 hours. Take a break.",
+        "4+ hours in this session. Step away — your brain needs reset.",
+        "Long session. A 10-min walk would compound the next hour.",
+    ],
+}
+
+
+def _rotated_phrasing(pool_key, **fmt):
+    """Pick a phrasing for `pool_key` rotated by day-of-year."""
+    from datetime import datetime as _dt
+    pool = _NEXT_ACTION_POOL.get(pool_key, [])
+    if not pool:
+        return ''
+    idx = _dt.now().timetuple().tm_yday % len(pool)
+    try:
+        return pool[idx].format(**fmt)
+    except (KeyError, IndexError):
+        return pool[idx]
+
+
+def _next_action(phase, budget_state, total_elapsed_sec,
+                 sermon_budget_state=None):
+    """One-line suggestion for what's next. Precedence: most urgent wins.
+    Phrasings rotate by day-of-year so the same advice doesn't fire
+    identically two days running (anti-habituation)."""
+    if sermon_budget_state == BUDGET_OVER:
+        return _rotated_phrasing('sermon_over')
     if budget_state == BUDGET_OVER:
-        return f"You're past the budget for {phase}. Consider moving to the next phase."
+        return _rotated_phrasing('phase_over', phase=phase)
+    if sermon_budget_state == BUDGET_WARN:
+        return _rotated_phrasing('sermon_warn')
     if budget_state == BUDGET_WARN:
-        return f"Approaching the budget for {phase}. Wrap up this thread soon."
+        return _rotated_phrasing('phase_warn', phase=phase)
     if total_elapsed_sec >= 4 * 3600:
-        return "You've been in this session over 4 hours. Take a break before the next phase."
-    return ""  # nothing pressing — render empty
+        return _rotated_phrasing('long_session')
+    return ""
 
 
 def _accumulate_sermon_elapsed(companion_db, session):
@@ -161,7 +215,8 @@ def assess_session(companion_db, study_analytics, session_id):
         'sermon_budget_sec': SERMON_BUDGET_SEC,
         'sermon_remaining_sec': sermon_remaining,
         'sermon_budget_state': sermon_state,
-        'next_action': _next_action(phase, state, total_elapsed),
+        'next_action': _next_action(phase, state, total_elapsed,
+                                    sermon_budget_state=sermon_state),
     }
 
 
