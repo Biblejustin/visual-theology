@@ -13,12 +13,15 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import re
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Batch reader and cache (optional; fall back to run_reader if unavailable)
 try:
@@ -516,6 +519,13 @@ def find_study_bible_notes(ref, max_chars=20000):
                     "text": text,
                 })
         except Exception:
+            # Don't kill the whole lookup if one study bible fails, but never
+            # swallow it silently: a wedged LogosReader makes every bible raise
+            # here, which used to return [] with zero log signal and render as
+            # a blank study-bible card (2026-05-22).
+            logger.warning("study bible lookup failed for %s (%s)",
+                           sb.get("abbrev", "?"), ref.get("ref_str", "?"),
+                           exc_info=True)
             continue
     return results
 

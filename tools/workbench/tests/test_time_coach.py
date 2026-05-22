@@ -171,6 +171,35 @@ def test_week_context_empty_db(stack):
     assert ctx['sessions_this_week'] == 0
 
 
+def test_week_context_counts_session_worked_this_week_even_if_created_earlier(stack):
+    """Bug 2026-05-22: week_context keyed on created_at, so a long-running
+    session created in a prior week showed 0 even while actively worked this
+    week. It should count sessions *touched* this week (updated_at)."""
+    sid = stack['db'].create_session('Romans 3:25-26', 66, 3, 25, 26, 'epistle')
+    conn = stack['db']._conn()
+    created = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    worked = datetime.now(timezone.utc).isoformat()
+    conn.execute("UPDATE sessions SET created_at = ?, updated_at = ? WHERE id = ?",
+                 (created, worked, sid))
+    conn.commit()
+    conn.close()
+    ctx = week_context(stack['db'], stack['sa'])
+    assert ctx['sessions_this_week'] == 1
+
+
+def test_week_context_excludes_session_not_touched_this_week(stack):
+    """A session neither created nor updated this week should not count."""
+    sid = stack['db'].create_session('Romans 3:25-26', 66, 3, 25, 26, 'epistle')
+    conn = stack['db']._conn()
+    old = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    conn.execute("UPDATE sessions SET created_at = ?, updated_at = ? WHERE id = ?",
+                 (old, old, sid))
+    conn.commit()
+    conn.close()
+    ctx = week_context(stack['db'], stack['sa'])
+    assert ctx['sessions_this_week'] == 0
+
+
 # ── prep_window_position ──────────────────────────────────────────────────
 
 def test_prep_window_position_returns_required_fields():

@@ -277,9 +277,14 @@ def week_context(companion_db, study_analytics):
     since = _start_of_week_iso()
     conn = companion_db._conn()
     try:
+        # Count sessions *touched* this week, not created this week. A
+        # long-running sermon created in a prior week but worked on now must
+        # count (bug 2026-05-22: keying on created_at showed "0 sessions this
+        # week" while Bryan was actively in a session). updated_at bumps on
+        # any write to the session, so it tracks real engagement.
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM sessions "
-            "WHERE created_at >= ? AND status = 'active'",
+            "WHERE updated_at >= ? AND status = 'active'",
             (since,)).fetchone()
     finally:
         conn.close()

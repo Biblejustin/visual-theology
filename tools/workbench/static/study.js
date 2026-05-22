@@ -492,7 +492,21 @@ async function sendStudyMessage(sessionId, message) {
 
         if (!response.ok) {
             var bubble = assistantEl.querySelector('.msg-content');
-            if (bubble) bubble.textContent = '[Error ' + response.status + ']';
+            var info = null;
+            try { info = await response.json(); } catch (e) {}
+            if (response.status === 423 && info && info.message) {
+                // Cutoff engaged (e.g. Friday 3pm / weekend lockout). Show the
+                // real reason in plain English instead of "[Error 423]", and
+                // flip the page into read-only mode the way the banner does.
+                if (bubble) {
+                    bubble.textContent = info.message + (
+                        info.reopens_at ? ' (writing reopens ' + info.reopens_at + ')' : '');
+                }
+                document.body.classList.add('cutoff-enforced');
+            } else if (bubble) {
+                bubble.textContent = '[Error ' + response.status + (
+                    info && info.message ? ': ' + info.message : '') + ']';
+            }
             return;
         }
 
@@ -1038,10 +1052,43 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Load outline on page load
     refreshOutline();
+    refreshHorizon();
 
-    // Sync clock every 60 seconds
-    setInterval(function() { studyClock.syncToServer(); }, 60000);
+    // Sync clock + refresh the week-horizon countdown every 60 seconds. The
+    // "to Friday 3pm" label is otherwise server-rendered once and freezes
+    // until a page reload (bug 2026-05-22).
+    setInterval(function() { studyClock.syncToServer(); refreshHorizon(); }, 60000);
 });
+
+/* Refresh the week-horizon countdown label + bar from the server so the
+ * "to Friday 3pm" text and the green→amber→red fill stay live without a
+ * page reload. Minute granularity, so the 60s timer is plenty. */
+function refreshHorizon() {
+    if (!window.studySessionId) return;
+    fetch('/study/session/' + window.studySessionId + '/horizon')
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(h) {
+            if (!h) return;
+            var tip = document.querySelector('.horizon-tooltip');
+            if (tip) {
+                tip.textContent = h.label || '';
+                tip.className = 'horizon-tooltip ' + (h.color || '');
+            }
+            var fill = document.querySelector('.horizon-bar .horizon-fill');
+            if (fill) {
+                fill.className = 'horizon-fill ' + (h.color || '');
+                if (h.state === 'in_window' && typeof h.fraction === 'number') {
+                    var pct = Math.round(h.fraction * 1000) / 10;
+                    fill.style.width = pct + '%';
+                    var marker = document.querySelector('.horizon-marker');
+                    if (marker) marker.style.left = 'calc(' + pct + '% - 1px)';
+                } else {
+                    fill.style.width = '';  // CSS drives full-width lockout/muted states
+                }
+            }
+        })
+        .catch(function() {});
+}
 
 /* ── Exports ────────────────────────────────────────────────────────────── */
 

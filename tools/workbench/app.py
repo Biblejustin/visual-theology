@@ -605,13 +605,22 @@ def _get_original_language_text(session):
 
 
 def _get_study_bible_notes(session):
-    """Get study bible notes for the session's passage."""
+    """Get study bible notes for the session's passage.
+
+    Returns [] on failure but LOGS it. A silent return-[] here (from a
+    degraded LogosReader) once rendered as a blank study-bible card with no
+    error signal at all, costing hours of process forensics to diagnose
+    (2026-05-22). Never swallow this quietly again.
+    """
     try:
         ref = parse_reference(session["passage_ref"])
         if not ref:
             return []
         return find_study_bible_notes(ref, max_chars=5000)
     except Exception:
+        app.logger.exception(
+            "study bible note lookup failed for passage %r",
+            (session or {}).get("passage_ref", "?"))
         return []
 
 
@@ -1185,6 +1194,19 @@ def study_refresh_next_action(session_id):
         'ok': True,
         'next_action': refreshed.get('next_action_text', ''),
     })
+
+
+@app.route("/study/session/<int:session_id>/horizon", methods=["GET"])
+def study_horizon(session_id):
+    """Live week-horizon (countdown label + bar fill/color) for the topbar.
+
+    The 'to Friday 3pm' label was server-rendered once and never ticked, so it
+    froze until a page reload (bug 2026-05-22). study.js polls this on its
+    existing 60s clock-sync timer to keep the countdown honest. The horizon is
+    global (time-based); session_id is accepted only for URL/auth consistency.
+    """
+    from time_coach import prep_window_position
+    return jsonify(prep_window_position())
 
 
 @app.route("/study/session/<int:session_id>/discuss", methods=["POST"])
