@@ -27,12 +27,15 @@
   background: #e8e1d0; transition: left 0.6s ease;
   box-shadow: 0 0 4px rgba(232, 225, 208, 0.6);
 }
+/* Horizon label sits inside the topbar (rendered in study_session.html
+ * topbar markup), not as a free-floating chip — the floating version
+ * overlapped #session-clock. Keep the visual styling here so the topbar
+ * just needs the class. */
 .horizon-tooltip {
-  position: fixed; top: 6px; right: 14px; z-index: 5501;
   background: rgba(20, 18, 14, 0.85); color: #c9b88a;
   font-family: -apple-system, system-ui, sans-serif;
   font-size: 10px; padding: 2px 8px; border-radius: 3px;
-  pointer-events: none; backdrop-filter: blur(4px);
+  pointer-events: none; flex-shrink: 0;
 }
 .horizon-tooltip.lockout { color: #ebc9c9; }
 .horizon-tooltip.muted   { color: #8a8275; }
@@ -48,5 +51,4 @@ body.body-doubling .horizon-tooltip { opacity: 0.5; }
     <div class="horizon-fill {{ horizon.color }}"></div>
   {% endif %}
 </div>
-<div class="horizon-tooltip {{ horizon.color }}">{{ horizon.label }}</div>
 {% endif %}

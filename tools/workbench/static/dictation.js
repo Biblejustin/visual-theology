@@ -170,7 +170,7 @@
           +     '<span class="ds-time" aria-label="Elapsed">0:00</span>'
           +     '<button type="button" class="ds-stop" aria-label="Stop recording">Stop</button>'
           +   '</div>'
-          +   '<canvas class="ds-canvas" width="800" height="60" aria-hidden="true"></canvas>'
+          +   '<canvas class="ds-canvas" width="800" height="30" aria-hidden="true"></canvas>'
           +   '<div class="ds-meter" aria-hidden="true"><span></span></div>'
           +   '<div class="ds-transcript-label">Live transcript</div>'
           +   '<div class="ds-transcript" aria-live="polite">Listening…</div>'
@@ -184,12 +184,16 @@
           + '  background: rgba(20, 18, 14, 0.92); backdrop-filter: blur(8px);'
           + '  border-bottom: 2px solid #c9b88a; box-shadow: 0 4px 20px rgba(0,0,0,0.5);'
           + '  font-family: -apple-system, system-ui, sans-serif; color: #e8e1d0;'
-          + '  padding: 14px 24px; transition: opacity 0.15s ease;'
+          + '  padding: 8px 20px; transition: opacity 0.15s ease;'
+          /* Never let the panel exceed the viewport — on short windows the
+           * Play/Re-record/Close row used to fall past the bottom edge of
+           * the fixed panel with no way to reach it. Cap + scroll. */
+          + '  max-height: 85vh; overflow-y: auto;'
           + '}'
           + '#dictation-stage .ds-card { max-width: 920px; margin: 0 auto; }'
           + '#dictation-stage .ds-header {'
-          + '  display: flex; align-items: center; gap: 12px; margin-bottom: 8px;'
-          + '  font-size: 14px;'
+          + '  display: flex; align-items: center; gap: 10px; margin-bottom: 4px;'
+          + '  font-size: 13px;'
           + '}'
           + '#dictation-stage .ds-dot {'
           + '  width: 11px; height: 11px; border-radius: 50%;'
@@ -212,11 +216,11 @@
           + '}'
           + '#dictation-stage .ds-stop:hover { background: #ebd9a7; }'
           + '#dictation-stage .ds-canvas {'
-          + '  display: block; width: 100%; height: 60px; background: #15130f;'
+          + '  display: block; width: 100%; height: 30px; background: #15130f;'
           + '  border: 1px solid #2d2a26; border-radius: 4px;'
           + '}'
           + '#dictation-stage .ds-meter {'
-          + '  margin-top: 6px; height: 4px; background: #2d2a26; border-radius: 2px;'
+          + '  margin-top: 4px; height: 3px; background: #2d2a26; border-radius: 2px;'
           + '  overflow: hidden;'
           + '}'
           + '#dictation-stage .ds-meter span {'
@@ -225,21 +229,21 @@
           + '}'
           + '#dictation-stage .ds-transcript-label {'
           + '  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;'
-          + '  color: #8a8275; margin: 10px 0 4px;'
+          + '  color: #8a8275; margin: 6px 0 2px;'
           + '}'
           + '#dictation-stage .ds-transcript {'
-          + '  min-height: 38px; max-height: 120px; overflow-y: auto;'
-          + '  font-size: 15px; line-height: 1.45; color: #e8e1d0;'
+          + '  min-height: 24px; max-height: 56px; overflow-y: auto;'
+          + '  font-size: 14px; line-height: 1.4; color: #e8e1d0;'
           + '  background: #1a1814; border: 1px solid #2d2a26;'
-          + '  border-radius: 4px; padding: 8px 12px;'
+          + '  border-radius: 4px; padding: 6px 10px;'
           + '}'
           + '#dictation-stage .ds-transcript.empty { color: #5a5447; font-style: italic; }'
           + '#dictation-stage .ds-review {'
-          + '  margin-top: 10px; padding-top: 10px; border-top: 1px solid #2d2a26;'
+          + '  margin-top: 6px; padding-top: 6px; border-top: 1px solid #2d2a26;'
           + '}'
           + '#dictation-stage .ds-summary {'
-          + '  display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline;'
-          + '  font-size: 13px; color: #b8af9d; margin-bottom: 8px;'
+          + '  display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline;'
+          + '  font-size: 12px; color: #b8af9d; margin-bottom: 4px;'
           + '}'
           + '#dictation-stage .ds-summary .badge {'
           + '  padding: 2px 10px; border-radius: 999px; font-size: 11px;'
@@ -251,6 +255,10 @@
           + '#dictation-stage .ds-summary .stat { font-variant-numeric: tabular-nums; }'
           + '#dictation-stage .ds-actions {'
           + '  display: flex; gap: 10px; margin-top: 6px;'
+          /* Keep the action buttons pinned to the bottom of the (scrollable)
+           * panel so they stay reachable even when the transcript is long. */
+          + '  position: sticky; bottom: 0;'
+          + '  background: rgba(20, 18, 14, 0.96); padding: 6px 0 2px;'
           + '}'
           + '#dictation-stage .ds-actions button {'
           + '  background: transparent; color: #c9b88a; border: 1px solid #6a5a3a;'
@@ -278,7 +286,16 @@
         Stage.waveformBuf = new Float32Array(160);
 
         Stage.stopBtn.addEventListener('click', function () {
-            if (Stage.owner) Stage.owner.stop();
+            if (!Stage.owner) return;
+            // During recording: Stop. During Processing: Cancel (abort
+            // the in-flight transcribe upload + close the stage). Without
+            // this branch the button locks on "Processing" until Whisper
+            // returns — sometimes minutes, sometimes never.
+            if (Stage.owner.processing) {
+                Stage.owner.cancelTranscription();
+            } else {
+                Stage.owner.stop();
+            }
         });
         return el;
     }
@@ -404,8 +421,11 @@
     function setStageProcessing() {
         if (!Stage.el) return;
         Stage.statusEl.textContent = 'Transcribing…';
-        Stage.stopBtn.disabled = true;
-        Stage.stopBtn.textContent = 'Processing';
+        // Stay clickable as Cancel — Bryan needs an escape hatch when
+        // Whisper hangs or returns garbage. Previously disabled with text
+        // "Processing", which gave him no way to abort.
+        Stage.stopBtn.disabled = false;
+        Stage.stopBtn.textContent = 'Cancel';
     }
 
     function setStageReview(data, owner) {
@@ -764,17 +784,39 @@
         form.append('audio', blob, 'dictation.' + ext);
 
         var url = '/study/session/' + this.sessionId + '/transcribe';
-        fetch(url, { method: 'POST', body: form })
+        // AbortController lets the Cancel button kill an in-flight upload.
+        // 90s timeout caps the wait — Whisper occasionally hangs and the
+        // previous code waited indefinitely. 90s is generous for a few
+        // minutes of audio at the OpenAI tier.
+        var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        this._abortCtl = ctl;
+        var timeoutHandle = null;
+        if (ctl) {
+            timeoutHandle = window.setTimeout(function () { ctl.abort('timeout'); }, 90000);
+        }
+        var clearTimer = function () { if (timeoutHandle) window.clearTimeout(timeoutHandle); };
+        fetch(url, { method: 'POST', body: form, signal: ctl ? ctl.signal : undefined })
             .then(function (r) {
+                clearTimer();
                 if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ('HTTP ' + r.status)); });
                 return r.json();
             })
             .then(function (data) {
+                self._abortCtl = null;
                 self.processing = false;
                 setState(self.wrap, 'idle');
                 setStageReview(data, self);
             })
             .catch(function (err) {
+                clearTimer();
+                self._abortCtl = null;
+                if (err && err.name === 'AbortError') {
+                    // User-initiated Cancel or 90s timeout. Quietly close.
+                    self.processing = false;
+                    setState(self.wrap, 'idle');
+                    hideStage();
+                    return;
+                }
                 console.error('dictation: Whisper transcription failed', err);
                 self.processing = false;
                 setState(self.wrap, 'error');
@@ -788,6 +830,19 @@
                 }, self);
                 alert('Whisper transcription failed: ' + err.message);
             });
+    };
+
+    Dictation.prototype.cancelTranscription = function () {
+        // Called by the Cancel button while processing. Abort the upload
+        // (if still in flight) and close the dictation stage so Bryan
+        // can get back to typing.
+        if (this._abortCtl) {
+            try { this._abortCtl.abort('user_cancel'); } catch (e) { /* ignore */ }
+            this._abortCtl = null;
+        }
+        this.processing = false;
+        setState(this.wrap, 'idle');
+        hideStage();
     };
 
     Dictation.prototype.playLastBlob = function (btn) {

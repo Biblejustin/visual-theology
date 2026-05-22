@@ -200,13 +200,12 @@ var studyClock = {
     },
 
     checkWellbeing: function() {
-        if (this.elapsed >= 14400 && !this.nudge4hShown) {
-            this.nudge4hShown = true;
-            showWellbeingNudge("Seriously, eat something. The Greek will still be here.");
-        } else if (this.elapsed >= 7200 && !this.nudge2hShown) {
-            this.nudge2hShown = true;
-            showWellbeingNudge("You've been locked in for 2 hours \u2014 grab some water?");
-        }
+        // Disabled. Bryan: "this little thing is annoying. it doesn't actually
+        // work well with time in real life and I just dismiss it." Clock
+        // elapsed accumulates wall-time, not actual focused work \u2014 even
+        // with auto-pause it fires after 2h of "having the tab open"
+        // rather than 2h of real engagement. Aligned with no-rescue-modes
+        // design (see feedback_no_rescue_modes_choice).
     },
 
     syncToServer: function() {
@@ -575,14 +574,34 @@ function appendConvMessage(role, text) {
     return wrapper;
 }
 
+function getSourcesList() {
+    var list = document.getElementById('sources-list');
+    if (!list) return null;
+    // First tool call clears the empty-state hint.
+    var empty = list.querySelector('.sources-empty');
+    if (empty) empty.remove();
+    return list;
+}
+
 function appendToolStart(name) {
-    var thread = document.getElementById('conversation-thread');
-    if (!thread) return;
+    var list = getSourcesList();
+    if (!list) return;
+
+    // Reuse a pending placeholder for this tool if one already exists
+    // (de-dupes rapid "Searching: grammars\u2026 / grammars\u2026 / grammars\u2026" runs).
+    var pending = list.querySelector('.source-card.pending[data-tool="' + name + '"]');
+    if (pending) {
+        list.appendChild(pending);  // bump to bottom = most recent
+        return;
+    }
 
     var el = document.createElement('div');
-    el.className = 'conv-tool-start';
-    el.textContent = 'Searching: ' + formatToolName(name) + '\u2026';
-    thread.appendChild(el);
+    el.className = 'source-card pending';
+    el.dataset.tool = name;
+    el.innerHTML = '<span class="source-spinner" aria-hidden="true"></span>' +
+                   '<span class="source-label">Searching ' + formatToolName(name) + '\u2026</span>';
+    list.appendChild(el);
+    list.scrollTop = list.scrollHeight;
 }
 
 function formatToolName(name) {
@@ -604,21 +623,12 @@ function formatToolName(name) {
 /* ── Rich Content Block Rendering ───────────────────────────────────────── */
 
 function renderToolResult(name, result) {
-    var thread = document.getElementById('conversation-thread');
-    if (!thread) return;
-
-    // Remove matching pending tool-start
-    var pending = thread.querySelectorAll('.conv-tool-start');
-    var needle = 'Searching: ' + formatToolName(name) + '\u2026';
-    for (var i = 0; i < pending.length; i++) {
-        if (pending[i].textContent === needle) {
-            pending[i].remove();
-            break;
-        }
-    }
-
-    // save_to_outline — show as insight pill
+    // save_to_outline is a write-side notification, not a research source.
+    // Keep it inline in the conversation thread as an "insight" pill so
+    // Bryan sees the confirmation next to the message that triggered it.
     if (name === 'save_to_outline') {
+        var thread = document.getElementById('conversation-thread');
+        if (!thread) return;
         var pillText = '';
         if (typeof result === 'object' && result !== null) {
             pillText = result.content || result.message || JSON.stringify(result);
@@ -635,13 +645,22 @@ function renderToolResult(name, result) {
         return;
     }
 
-    // Default: collapsible tool result
-    var wrapper = document.createElement('div');
-    wrapper.className = 'conv-tool-result';
+    // All other tool calls (Bible / lexicon / grammar / commentary /
+    // cross-refs / search) flow into the Sources panel on the left so
+    // they don't push the chat upward as the AI streams.
+    var list = getSourcesList();
+    if (!list) return;
+
+    var pending = list.querySelector('.source-card.pending[data-tool="' + name + '"]');
+    var card = pending || document.createElement('div');
+    card.className = 'source-card';
+    card.dataset.tool = name;
+    while (card.firstChild) card.removeChild(card.firstChild);
 
     var details = document.createElement('details');
     var summary = document.createElement('summary');
     summary.textContent = formatToolName(name);
+    details.appendChild(summary);
 
     var body = document.createElement('div');
     body.className = 'tool-body';
@@ -651,11 +670,11 @@ function renderToolResult(name, result) {
         try { body.textContent = JSON.stringify(result, null, 2); }
         catch (e) { body.textContent = String(result); }
     }
-
-    details.appendChild(summary);
     details.appendChild(body);
-    wrapper.appendChild(details);
-    thread.appendChild(wrapper);
+    card.appendChild(details);
+
+    if (!pending) list.appendChild(card);
+    list.scrollTop = list.scrollHeight;
 }
 
 /* ── Scroll ─────────────────────────────────────────────────────────────── */

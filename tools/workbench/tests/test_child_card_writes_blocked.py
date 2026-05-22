@@ -1,5 +1,10 @@
-"""I2 — server-side 403 guard on child card-write endpoints + children start
-at the 'context' (conversation) phase rather than 'prayer'.
+"""Children are first-class sessions: they get their own card responses,
+auto-save, and start at 'prayer' like any session. The v1 read-only-child
+policy was wrong for Bryan's actual weekly workflow — each week's preached
+sermon is a child of the series parent, and needs full card access.
+
+(Filename kept for git history continuity even though it now asserts the
+opposite of the original I2 spec.)
 """
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -43,24 +48,23 @@ def _split_into_one_child(client):
     return parent_id, children[0]['id']
 
 
-def test_child_card_next_returns_403(client):
+def test_child_card_next_persists_response(client):
     _, child_id = _split_into_one_child(client)
     resp = client.post(f'/study/session/{child_id}/card/next',
-                        data={'response': 'should not save'})
-    assert resp.status_code == 403, resp.data
-    # And nothing should have been written to card_responses for the child.
+                        data={'response': 'A real prayer for this week'})
+    assert resp.status_code == 302, resp.data
     rows = app_module.companion_db.get_card_responses(child_id)
-    assert rows == []
+    assert any(r['content'] == 'A real prayer for this week' for r in rows)
 
 
-def test_child_card_autosave_returns_403(client):
+def test_child_card_autosave_persists(client):
     _, child_id = _split_into_one_child(client)
     resp = client.post(f'/study/session/{child_id}/card/autosave',
-                        data=json.dumps({'content': 'should not save'}),
+                        data=json.dumps({'content': 'in-progress draft'}),
                         content_type='application/json')
-    assert resp.status_code == 403, resp.data
+    assert resp.status_code == 200, resp.data
     body = resp.get_json()
-    assert body and body.get('error') == 'child_session_read_only'
+    assert body and body.get('ok') is True
 
 
 def test_parent_card_next_still_works(client):
@@ -75,8 +79,8 @@ def test_parent_card_next_still_works(client):
     assert any(r['content'] == 'A real prayer' for r in rows)
 
 
-def test_child_session_starts_at_context_phase_not_prayer(client):
+def test_child_session_starts_at_prayer(client):
     _, child_id = _split_into_one_child(client)
     child = app_module.companion_db.get_session(child_id)
-    assert child['current_phase'] == 'context', \
-        f"child should start at context, got {child['current_phase']!r}"
+    assert child['current_phase'] == 'prayer', \
+        f"child should start at prayer like any session, got {child['current_phase']!r}"

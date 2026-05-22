@@ -511,6 +511,27 @@ _MANUAL_GLOSSES = {
 }
 
 
+_BDAG_BIBLIOGRAPHIC_MARKERS = (
+    # BDAG entry headers often end with bibliographic abbreviations
+    # BEFORE the real definition starts. Examples seen for πάρεσις:
+    # "s.v.—DELG s.v. ἵημι. M-M. TW". Treat any candidate gloss
+    # containing these as bibliographic noise so the extractor keeps
+    # scanning for the actual English definition further in the entry.
+    "s.v.", "DELG", "M-M", "MM.", "TW", "L-S-J", "LSJ",
+    "Frisk", "Schwyzer", "BDF", "TLG",
+)
+
+
+def _is_bdag_bibliographic_gloss(s):
+    """True when `s` is etymology/cross-reference noise, not a gloss."""
+    if not s:
+        return True
+    for marker in _BDAG_BIBLIOGRAPHIC_MARKERS:
+        if marker in s:
+            return True
+    return False
+
+
 def _extract_gloss_from_bdag(text):
     """Extract short English gloss from BDAG article text."""
     import re
@@ -526,7 +547,7 @@ def _extract_gloss_from_bdag(text):
         if not after or not re.match(r"[a-z]", after):
             continue
         # Extract text up to first Greek character
-        gloss = re.split(r"[\u0370-\u03FF\u1F00-\u1FFF]", after)[0]
+        gloss = re.split(r"[Ͱ-Ͽἀ-῿]", after)[0]
         # Remove Bible references (e.g. "Ro 2:17")
         gloss = re.sub(r"\s+[A-Z][a-z]{0,2}\s+\d+[,:]\d+.*$", "", gloss)
         gloss = re.sub(r"\s*\(.*$", "", gloss)
@@ -538,6 +559,9 @@ def _extract_gloss_from_bdag(text):
             words.pop()
         gloss = " ".join(words).strip().rstrip(",;.—: ")
         if len(gloss.split()) < 1 or len(gloss) <= 2:
+            continue
+        # Reject bibliographic markers — keep scanning for a real gloss.
+        if _is_bdag_bibliographic_gloss(gloss):
             continue
         if len(gloss) > 60:
             gloss = gloss[:60].rsplit(" ", 1)[0].rstrip(",;.")

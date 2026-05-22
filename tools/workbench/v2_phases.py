@@ -97,6 +97,40 @@ _LEGACY_TO_V2 = {
 }
 
 
+_V2_TO_LEGACY = {
+    # Picker side of the mapping: when Bryan picks a v2 phase the
+    # legacy current_phase needs to follow so the UI machinery (card
+    # vs conversation mode, which card template renders, which input
+    # surface shows) lands on the right screen. Several v2 phases
+    # share a legacy bucket because the old taxonomy was coarser —
+    # that's fine, the v2 phase is the source of truth for posture
+    # and persona; legacy is purely about UI shape.
+    'p01_prayer':          'prayer',
+    'p02_read_translate':  'read_translate',
+    'p03_digestion':       'digestion',
+    'p04_exegesis':        'observation',
+    'p05_quick_answers':   'study_bibles',
+    'p06_context':         'context',
+    'p07_big_picture':     'context',
+    'p08_christ':          'theological',
+    'p09_systematics':     'theological',
+    'p10_patristics':      'theological',
+    'p11_confessions':     'theological',
+    'p12_commentaries':    'commentary',
+    'p13_sermon_work':     'exegetical_point',
+    'p14_sermon_writing':  'sermon_construction',
+    'p15_finishing':       'edit_pray',
+    'p16_ruthless_edit':   'edit_pray',
+}
+
+
+def legacy_phase_for_v2(v2_phase_key):
+    """Return the legacy current_phase that matches this v2 key.
+    Used by the picker to sync legacy when v2 changes — the UI uses
+    legacy to decide card-vs-conversation mode."""
+    return _V2_TO_LEGACY.get(v2_phase_key)
+
+
 def resolve_v2_phase(v2_phase, legacy_phase):
     """Pick the v2 phase to use. Explicit v2_phase wins; else map from
     legacy; else default to p04_exegesis (matches the old router's

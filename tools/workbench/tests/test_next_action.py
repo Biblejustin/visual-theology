@@ -224,9 +224,12 @@ def test_session_page_renders_next_action_when_cached(client):
     assert 'next-action-line' in body
 
 
-def test_session_page_falls_back_to_phase_posture_when_no_cache(client):
-    """If next_action_text is empty, the partial should still render
-    using the v2 phase's static cue so the UI is never empty."""
+def test_session_page_hides_next_action_when_no_cache(client):
+    """When next_action_text is empty, the line should NOT render.
+    Previously fell back to persona_prompts._ACTIVE_FOCUS cues which
+    are uppercase LLM-facing instructions ("PROACTIVE.", "PROACTIVELY")
+    — not user-facing copy. Hide the line entirely instead of leaking
+    internal LLM directives onto Bryan's screen."""
     import app as app_module
     sid = _new_session(client)
     app_module.companion_db.update_phase(sid, 'context')
@@ -234,5 +237,6 @@ def test_session_page_falls_back_to_phase_posture_when_no_cache(client):
     r = client.get(f'/study/session/{sid}')
     assert r.status_code == 200
     body = r.get_data(as_text=True)
-    # The phase posture for p06_context starts with 'PROACTIVE.'
-    assert 'PROACTIVE' in body or 'cultural' in body.lower()
+    assert 'PROACTIVE.' not in body
+    assert 'PROACTIVELY' not in body
+    assert 'class="next-action-line"' not in body

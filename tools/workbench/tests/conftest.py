@@ -280,8 +280,10 @@ def get_tool_results(page):
     """
     results = []
 
-    # Standard tool results (collapsible <details>)
-    tool_els = page.locator(".conv-tool-result")
+    # Tool results render in the Sources panel as `.source-card` (replacing
+    # the in-thread `.conv-tool-result` design). Only finished cards have
+    # a <summary>; pending placeholders don't, so they're skipped.
+    tool_els = page.locator(".source-card:not(.pending)")
     for i in range(tool_els.count()):
         el = tool_els.nth(i)
         summary = el.locator("summary")

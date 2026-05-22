@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sermon Study</title>
-    <link rel="stylesheet" href="/static/study.css?v=14">
+    <link rel="stylesheet" href="/static/study.css?v=18">
 </head>
 <body>
     {% include "partials/cutoff_banner.html" %}
@@ -16,7 +16,6 @@
           <div class="resume-card-top">
             <span class="resume-label">Resume</span>
             <span class="resume-passage">{{ resume.passage_ref }}</span>
-            <span class="resume-persona persona-{{ resume._persona }}">{{ resume._persona }}</span>
           </div>
           <div class="resume-card-meta">
             <span class="resume-phase">{{ resume._v2_phase_name }}</span>
@@ -55,7 +54,7 @@
                     <span class="meta">{{ s.current_phase | replace('read_translate', 'Read & Translate') | replace('study_bibles', 'Study Bibles') | replace('_', ' ') | title }}</span>
                 </a>
                 <form method="POST" action="/study/session/{{ s.id }}/delete" onsubmit="return confirm('Delete this session?')">
-                    <button type="submit" class="session-delete-btn">Delete</button>
+                    <button type="submit" class="session-delete-btn" aria-label="Delete {{ s.passage_ref }}" title="Delete session">&times;</button>
                 </form>
             </div>
             {% endfor %}

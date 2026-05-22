@@ -142,7 +142,47 @@ def get_scheduler():
 
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32).hex())
+
+
+def _load_flask_secret_key():
+    """Return a stable Flask secret key across restarts.
+
+    Order: $FLASK_SECRET_KEY → /Volumes/External/Logos4/Data/.flask_secret_companion
+    → generate and persist to that file. Falling back to os.urandom() each
+    boot (the old behavior) invalidates every active session cookie on
+    every PM2 restart — Bryan saw word-lookups suddenly 401-ing after a
+    deploy because his cookie no longer matched the new in-memory secret.
+    """
+    env_val = os.environ.get("FLASK_SECRET_KEY")
+    if env_val:
+        return env_val
+    secret_path = os.environ.get(
+        "FLASK_SECRET_KEY_PATH",
+        "/Volumes/External/Logos4/Data/.flask_secret_companion",
+    )
+    try:
+        if os.path.isfile(secret_path):
+            with open(secret_path) as f:
+                v = f.read().strip()
+            if v:
+                return v
+        # First boot: generate + persist (0600). Skipped during tests.
+        if os.environ.get("TESTING") or app.config.get("TESTING"):
+            return os.urandom(32).hex()
+        import secrets as _secrets
+        os.makedirs(os.path.dirname(secret_path), exist_ok=True)
+        with open(secret_path, "w") as f:
+            f.write(_secrets.token_hex(32))
+        os.chmod(secret_path, 0o600)
+        with open(secret_path) as f:
+            return f.read().strip()
+    except Exception:
+        # Disk-write failure: fall back to ephemeral so the app still
+        # boots. Sessions will reset on next restart in that case.
+        return os.urandom(32).hex()
+
+
+app.secret_key = _load_flask_secret_key()
 
 # When proxied (Cloudflare tunnel → 127.0.0.1:5111), trust the X-Forwarded-*
 # headers so Flask sees the public HTTPS scheme + host. Otherwise url_for and
@@ -613,16 +653,13 @@ def study_index():
     sessions = companion_db.list_sessions(status='active')
     error = request.args.get('error')
 
-    # Resume card: most recently updated active session, NOT a child.
-    # 'updated_at' is bumped by most writes (outline, decisions, clock,
-    # messages) which makes it a reasonable proxy for last meaningful
-    # touch. Children are filtered out so a series doesn't shadow its
-    # parent on the resume card.
+    # Resume card: most recently updated active session — children
+    # included, because each child is a first-class preaching unit and
+    # the one Bryan is actually working on this week should surface
+    # ahead of its (less-recently-touched) series parent.
     resume = None
     if sessions:
-        non_child = [s for s in sessions if not s.get('parent_session_id')]
-        candidates = non_child or sessions
-        resume = max(candidates,
+        resume = max(sessions,
                      key=lambda s: s.get('updated_at') or s.get('created_at') or '')
         # Compute the persona for display, using v2 phase as the source
         # of truth (consistent with what the agent + session page show).
@@ -856,6 +893,20 @@ def study_session_view(session_id):
     if not session:
         return redirect(url_for("study_index"))
 
+    # Self-heal: sessions touched via the v2 picker before legacy-sync
+    # shipped have v2_phase pointing to a (say) prayer/read_translate
+    # while legacy current_phase is still on a stale conversation key.
+    # Re-align legacy on first view so the card UI renders the correct
+    # screen instead of the silent-phase notice. Only fires when the
+    # mapping says they should differ — no-op for in-sync sessions.
+    from v2_phases import legacy_phase_for_v2 as _legacy_for_v2
+    _v2 = session.get('v2_phase')
+    if _v2:
+        _want_legacy = _legacy_for_v2(_v2)
+        if _want_legacy and session.get('current_phase') != _want_legacy:
+            companion_db.update_phase(session_id, _want_legacy)
+            session = companion_db.get_session(session_id)
+
     # Series context — empty list when standalone.
     series_members = companion_db.get_series(session_id)
     parent_session = None
@@ -897,12 +948,12 @@ def study_session_view(session_id):
 
     if phase in card_phase_keys:
         # Card mode (phases 1-5).
-        # Children inherit parent card content (read-only) per v1 spec: no
-        # per-child card overrides yet. Auto-resources, card responses, and the
-        # card-draft notepad all key off the parent when this is a child.
+        # Children are first-class: they get their own prayer/translation/
+        # digestion data keyed on the child session. The parent series acts
+        # only as a breadcrumb. Each week's preaching unit owns its work.
         phase_index = card_phase_keys.index(phase)
         card_def = CARD_PHASES[phase_index]
-        card_session = parent_session if is_child else session
+        card_session = session
         card_session_id = card_session['id']
         resource_text = None
         study_bible_notes = None
@@ -1049,6 +1100,30 @@ def study_set_v2_phase(session_id):
     })
 
 
+@app.route("/study/session/<int:session_id>/preach-date", methods=["POST"])
+def study_set_preach_date(session_id):
+    """Set the date Bryan will preach this sermon. Body: {date: 'YYYY-MM-DD'}
+    or {date: null} to clear. Validates the format so we don't store
+    junk that breaks downstream parsers."""
+    session, err = require_session(companion_db, session_id)
+    if err: return err
+    data, err = json_body()
+    if err: return err
+    raw = data.get('date')
+    if raw in (None, ''):
+        companion_db.set_preach_date(session_id, None)
+        return jsonify({'ok': True, 'preach_date': None})
+    if not isinstance(raw, str):
+        return jsonify({'error': 'date must be a YYYY-MM-DD string or null'}), 400
+    try:
+        from datetime import date as _date
+        _date.fromisoformat(raw)  # validates format + real calendar date
+    except ValueError:
+        return jsonify({'error': 'date must be YYYY-MM-DD'}), 400
+    companion_db.set_preach_date(session_id, raw)
+    return jsonify({'ok': True, 'preach_date': raw})
+
+
 def _maybe_generate_next_action(session_id, v2_phase_key):
     """Fire-and-forget LLM call to refresh the next-action cue.
 
@@ -1140,9 +1215,6 @@ def study_card_next(session_id):
     session = companion_db.get_session(session_id)
     if not session:
         return "Session not found", 404
-    if session.get("parent_session_id"):
-        return ("Card writes are not allowed on child sessions; "
-                "their cards are inherited from the parent.", 403)
     phase = session.get("current_phase", "prayer")
     response_text = request.form.get("response", "").strip()
     if response_text:
@@ -1174,12 +1246,20 @@ def study_card_back(session_id):
 
 
 def _transition_phase(session_id, old_phase, new_phase):
-    """Atomic phase swap that keeps phase_events in sync.
+    """Atomic phase swap that keeps phase_events in sync, AND keeps the
+    v2 phase pointer in sync when the legacy phase has a clean mapping.
 
     Previously update_phase() was called directly with no exit/enter
     events, so the Time Coach phase-budget ring computed from
     phase_events showed a full 45m even for long-running context
     sessions, and 90-minute hyperfocus detection couldn't fire.
+
+    The v2 sync was added because the session-view self-heal rewrites
+    `current_phase` back to whatever legacy matches `v2_phase`. Without
+    advancing v2_phase here too, /card/next would change legacy from
+    'read_translate' to 'digestion', then the view-render self-heal
+    would see v2='p02_read_translate' ≠ legacy='digestion' and clobber
+    legacy back to 'read_translate' — making the Next button look broken.
     """
     if new_phase == old_phase:
         return
@@ -1189,6 +1269,19 @@ def _transition_phase(session_id, old_phase, new_phase):
         except Exception:
             pass
     companion_db.update_phase(session_id, new_phase)
+    # Sync the v2 phase pointer using the legacy→v2 mapping. If the new
+    # legacy phase has a v2 counterpart, transition v2 atomically too —
+    # this also fires balanced v2 phase_events. Only advance v2 when the
+    # mapping exists; legacy phases like 'context' map to multiple v2
+    # phases (p06/p07) so we leave v2 alone in those cases (Bryan picks
+    # via the picker).
+    try:
+        from v2_phases import _LEGACY_TO_V2
+        new_v2 = _LEGACY_TO_V2.get(new_phase)
+        if new_v2:
+            companion_db.transition_v2_phase(session_id, new_v2)
+    except Exception:
+        pass
     if study_analytics:
         try:
             study_analytics.record_phase_enter(session_id, new_phase)
@@ -1214,8 +1307,6 @@ def study_card_autosave(session_id):
     content = data.get("content", "")
     session, err = require_session(companion_db, session_id)
     if err: return err
-    if session.get("parent_session_id"):
-        return jsonify({"error": "child_session_read_only"}), 403
     phase = session.get("current_phase", "prayer")
     # Use notepad table for auto-save (upsert by session+phase)
     companion_db.save_card_notepad(session_id, phase=f"card_{phase}", content=content)
@@ -1637,10 +1728,10 @@ def study_session_split(session_id):
                 "INSERT INTO sessions (passage_ref, book, chapter, verse_start, "
                 "verse_end, genre, parent_session_id, series_position, series_title, "
                 "current_phase, status, created_at, updated_at) "
-                # Children start at 'context' (first conversation phase) — they
-                # inherit the parent's card-phase work and the UI renders parent
-                # cards read-only, so card phases would be meaningless on them.
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'context', 'active', ?, ?)",
+                # Children are first-class preaching units — start at 'prayer'
+                # like any session so each week's sermon gets its own full
+                # 16-phase walk. The parent series is just a breadcrumb.
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'prayer', 'active', ?, ?)",
                 (f"{book_chap_prefix}:{r['verse_start']}-{r['verse_end']}",
                  parent["book"], parent["chapter"], r["verse_start"], r["verse_end"],
                  parent["genre"], session_id, r["position"], r["title"],

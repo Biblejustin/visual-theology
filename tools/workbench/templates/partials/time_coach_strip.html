@@ -36,6 +36,7 @@
   font-variant-numeric: tabular-nums;
   color: #e8e1d0;
   line-height: 1;
+  white-space: nowrap;
 }
 .tc-ring.ok    .tc-ring-arc { stroke: #88b878; }
 .tc-ring.warn  .tc-ring-arc { stroke: #ebd078; }
@@ -108,9 +109,9 @@ body[data-clock-state^="paused-"] .tc-ring .tc-ring-center { opacity: 0; }
 {% set sermon_offset = c * (1 - sermon_ratio) %}
 {% set sermon_text_min = (sermon_remaining / 60)|round(0, 'floor')|int %}
 {% if sermon_text_min >= 60 %}
-  {% set sermon_hours = sermon_text_min // 60 %}
-  {% set sermon_mins = sermon_text_min % 60 %}
-  {% set sermon_display = sermon_hours ~ 'h' ~ (' ' ~ sermon_mins ~ 'm' if sermon_mins else '') %}
+  {# At hours scale the ring is ambient — minutes wrap the 42px ring into
+   # two stacked lines and don't matter for awareness. Just show whole hours. #}
+  {% set sermon_display = (sermon_text_min // 60) ~ 'h' %}
 {% else %}
   {% set sermon_display = sermon_text_min ~ 'm' %}
 {% endif %}
@@ -129,7 +130,7 @@ body[data-clock-state^="paused-"] .tc-ring .tc-ring-center { opacity: 0; }
       <div class="tc-ring-center">{{ phase_display }}</div>
     </div>
     <div class="tc-label">
-      <span class="tc-label-top">{{ time_coach.current_phase }}</span>
+      <span class="tc-label-top">{{ time_coach.current_phase_display or time_coach.current_phase }}</span>
       <span class="tc-label-bot">phase budget</span>
     </div>
   </div>

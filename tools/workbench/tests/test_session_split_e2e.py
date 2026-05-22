@@ -74,16 +74,19 @@ def test_full_split_flow_for_romans_3_21_26(client):
         resp = client.get(f'/study/session/{sid}')
         assert b'series-breadcrumb' in resp.data, f'no breadcrumb on session {sid}'
 
-    # 6) Child inherits parent's read_translate card
+    # 6) Child has its OWN card surface (first-class session) and shows
+    #    a 'Part of series' breadcrumb back to the parent for context.
     child = children[0]
+    db.save_card_response(child['id'], 'read_translate', 0, 'Child working translation')
     conn = db._conn()
     conn.execute("UPDATE sessions SET current_phase='read_translate' WHERE id=?",
                   (child['id'],))
     conn.commit()
     conn.close()
     resp = client.get(f'/study/session/{child["id"]}')
-    assert b'Broad exegesis of Romans 3:21-26' in resp.data
-    assert b'From parent session' in resp.data
+    assert b'Child working translation' in resp.data
+    assert b'Broad exegesis of Romans 3:21-26' not in resp.data  # parent text must not bleed in
+    assert b'Part of series' in resp.data
 
     # 7) Re-split is rejected
     resp = client.post(f'/study/session/{parent_id}/split',

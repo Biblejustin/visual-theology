@@ -1,12 +1,15 @@
 {# Point-of-performance EF prosthesis cue.
    Surfaces the cached next_action_text generated when v2_phase changed.
-   Falls back to the v2 phase's static posture when no cache.
-   Shame-resistant copy convention: imperative voice, no 'should/overdue'. #}
-{% if next_action_text or active_focus_posture %}
+   Shame-resistant copy convention: imperative voice, no 'should/overdue'.
+   Previously fell back to persona_prompts._ACTIVE_FOCUS cues, but those
+   are LLM-facing instructions ("PROACTIVE. Cultural / geographic …")
+   not user-facing copy — they shouldn't render. Hide the line entirely
+   when we don't have a generated cue yet. #}
+{% if next_action_text %}
 <div class="next-action-line" id="next-action-line"
      data-session-id="{{ session.id }}">
   <span class="next-action-label">Next:</span>
-  <span class="next-action-text" id="next-action-text">{{ next_action_text or active_focus_posture }}</span>
+  <span class="next-action-text" id="next-action-text">{{ next_action_text }}</span>
   <button type="button" class="next-action-refresh"
           title="Regenerate this cue"
           onclick="(async function(btn) {

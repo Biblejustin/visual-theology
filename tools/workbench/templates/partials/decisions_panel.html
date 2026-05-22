@@ -3,11 +3,23 @@
   background: #232019;
   border: 1px solid #2d2a26;
   border-radius: 8px;
-  padding: 12px 14px;
-  margin: 12px 0;
+  padding: 0 14px;
+  margin: 8px 0;
   font-family: -apple-system, system-ui, sans-serif;
   font-size: 13px;
 }
+#decisions-panel > summary {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: #8a8275; padding: 10px 0; font-weight: 600;
+  cursor: pointer; list-style: none;
+}
+#decisions-panel > summary::-webkit-details-marker { display: none; }
+#decisions-panel > summary::before {
+  content: '▸'; display: inline-block; margin-right: 8px;
+  transition: transform 0.15s ease;
+}
+#decisions-panel[open] > summary::before { transform: rotate(90deg); }
+#decisions-panel[open] { padding-bottom: 12px; }
 #decisions-panel h3 {
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
   color: #8a8275; margin: 0 0 10px; font-weight: 600;
@@ -51,11 +63,11 @@
   font-size: 11px; color: #8a8275; margin-bottom: 8px;
 }
 </style>
-<div id="decisions-panel">
-  <h3>Decisions committed</h3>
-  <div class="dec-summary">
-    {{ committed_decisions|length }} of {{ committed_decisions|length + open_decision_keys|length }} committed
-  </div>
+<details id="decisions-panel" {% if committed_decisions %}open{% endif %}>
+  <summary>
+    Decisions committed
+    &nbsp;&nbsp;<span class="dec-summary-inline">{{ committed_decisions|length }} of {{ committed_decisions|length + open_decision_keys|length }}</span>
+  </summary>
 
   {% for d in committed_decisions %}
   <div class="dec-row committed">
@@ -95,4 +107,4 @@
     </form>
   </div>
   {% endfor %}
-</div>
+</details>

@@ -21,6 +21,7 @@ landed; the previous timer would have over-reported elapsed for any
 session where Bryan switched tabs or walked away.
 """
 
+import os
 from datetime import datetime, timezone
 
 from companion_db import PHASE_TIMERS
@@ -179,33 +180,19 @@ def _next_action(phase, budget_state, total_elapsed_sec,
 
 
 def _accumulate_sermon_elapsed(companion_db, session):
-    """Sum total_elapsed_seconds across this session AND any series siblings.
+    """Return total_elapsed_seconds for THIS session only.
 
-    For a standalone session this is just its own elapsed. For a series child
-    (parent_session_id set) it sums parent + every child so the sermon-scale
-    ring reflects work across the whole prep arc, not just this one session.
+    Bryan: "I just started to truly work on this sermon and it's saying
+    I'm out of time it's been 3 hours and 23 min of work…" The previous
+    implementation summed across parent + every sibling in a series,
+    which made sense when children inherited the parent's prep and were
+    read-only. Now that children are first-class preaching units (each
+    week's sermon is its own child), summing siblings makes the budget
+    ring count work on OTHER sermons against THIS sermon's 13.5h budget,
+    and the ring shows exhausted before Bryan even starts. Each child
+    gets its own clean budget.
     """
-    total = int(session.get('total_elapsed_seconds') or 0)
-    parent_id = session.get('parent_session_id')
-    # Walk the series — pick whichever node we have, then read its children.
-    if parent_id:
-        try:
-            parent = companion_db.get_parent(session['id'])
-            if parent:
-                total = int(parent.get('total_elapsed_seconds') or 0)
-                for child in companion_db.get_children(parent['id']):
-                    if child['id'] != session['id']:
-                        total += int(child.get('total_elapsed_seconds') or 0)
-                # Add this session's elapsed too (skipped above)
-                total += int(session.get('total_elapsed_seconds') or 0)
-        except Exception:
-            pass
-    else:
-        try:
-            for child in companion_db.get_children(session['id']):
-                total += int(child.get('total_elapsed_seconds') or 0)
-        except Exception:
-            pass
+    return int(session.get('total_elapsed_seconds') or 0)
     return total
 
 
@@ -230,6 +217,7 @@ def assess_session(companion_db, study_analytics, session_id):
         from v2_phases import get_phase as get_v2_phase
         v2_row = get_v2_phase(explicit_v2)
         phase = v2_row.key if v2_row else explicit_v2
+        phase_display = v2_row.name if v2_row else explicit_v2
         budget = (v2_row.budget_min * 60) if (v2_row and v2_row.budget_min) else None
         time_in_phase = _seconds_in_current_phase(study_analytics, session_id, phase)
         # If v2 events haven't accumulated yet, fall back to legacy elapsed
@@ -240,6 +228,7 @@ def assess_session(companion_db, study_analytics, session_id):
                 study_analytics, session_id, session['current_phase'])
     else:
         phase = session['current_phase']
+        phase_display = phase.replace('_', ' ').title() if phase else ''
         budget = PHASE_TIMERS.get(phase)
         time_in_phase = _seconds_in_current_phase(study_analytics, session_id, phase)
     state = _budget_state(time_in_phase, budget)
@@ -252,6 +241,7 @@ def assess_session(companion_db, study_analytics, session_id):
         phase_remaining = max(0, budget - time_in_phase)
     return {
         'current_phase': phase,
+        'current_phase_display': phase_display,
         'session_created_at': session.get('created_at'),
         'time_in_phase_sec': time_in_phase,
         'phase_budget_sec': budget,
@@ -262,7 +252,7 @@ def assess_session(companion_db, study_analytics, session_id):
         'sermon_budget_sec': SERMON_BUDGET_SEC,
         'sermon_remaining_sec': sermon_remaining,
         'sermon_budget_state': sermon_state,
-        'next_action': _next_action(phase, state, total_elapsed,
+        'next_action': _next_action(phase_display, state, total_elapsed,
                                     sermon_budget_state=sermon_state,
                                     time_in_phase_sec=time_in_phase),
     }
@@ -317,6 +307,32 @@ def prep_window_position():
     """
     from datetime import timedelta
     now = _now().astimezone()
+    raw_override = os.environ.get("LOGOS_CUTOFF_OVERRIDE_UNTIL")
+    if raw_override:
+        try:
+            override_until = datetime.fromisoformat(raw_override)
+        except ValueError:
+            override_until = None
+        if override_until is not None:
+            if override_until.tzinfo is None:
+                override_until = override_until.replace(tzinfo=now.tzinfo)
+            override_until = override_until.astimezone(now.tzinfo)
+            if now < override_until:
+                remaining = (override_until - now).total_seconds()
+                rem_hours = int(remaining // 3600)
+                rem_min = int((remaining % 3600) // 60)
+                if rem_hours >= 24:
+                    rem_label = f"{rem_hours // 24}d {rem_hours % 24}h to temporary cutoff"
+                elif rem_hours >= 1:
+                    rem_label = f"{rem_hours}h {rem_min}m to temporary cutoff"
+                else:
+                    rem_label = f"{rem_min}m to temporary cutoff"
+                tue_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=(now.weekday() - 1))
+                window_total = (override_until - tue_start).total_seconds()
+                elapsed = (now - tue_start).total_seconds()
+                fraction = 1.0 if window_total <= 0 else max(0.0, min(1.0, elapsed / window_total))
+                return {'state': 'in_window', 'fraction': fraction, 'color': 'amber',
+                        'label': rem_label}
     wd = now.weekday()  # Mon=0 .. Tue=1 .. Sun=6
     if wd == 0:  # Monday
         return {'state': 'day_off', 'fraction': None, 'color': 'muted',

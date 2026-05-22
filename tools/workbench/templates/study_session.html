@@ -4,20 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ session.passage_ref }} — Study</title>
-    <link rel="stylesheet" href="/static/study.css?v=14">
+    <link rel="stylesheet" href="/static/study.css?v=18">
 </head>
 <body class="session-layout" data-mode="{{ mode }}">
     {% include "partials/horizon_bar.html" %}
-    {% include "partials/cutoff_banner.html" %}
-    {% include "partials/persona_indicator.html" %}
-    {% include "partials/time_coach_strip.html" %}
     {% include "partials/body_doubling_toggle.html" %}
-    {% include "partials/v2_phase_picker.html" %}
     <div id="study-app">
 
         <div id="study-topbar">
             <a href="/sermons/" class="topbar-link">Sermons</a>
             <span class="topbar-passage">{{ session.passage_ref }}</span>
+            <label class="preach-date-control" title="Preach date for this sermon">
+                <span class="preach-date-label">Preach</span>
+                <input type="date" id="preach-date-input"
+                       value="{{ session.preach_date or '' }}"
+                       data-session-id="{{ session.id }}">
+            </label>
             <div class="topbar-dots">
                 {% for i in range(total_phases) %}
                 <span class="phase-dot {% if i < phase_index %}done{% elif i == phase_index and mode == 'card' %}current{% endif %}"></span>
@@ -30,7 +32,23 @@
             {% for _s in linked_sermons %}{% if _s.ui_last_seen_version < _s.source_version %}{% set _has_update.v = true %}{% endif %}{% endfor %}
             <button type="button" class="tab-button" data-tab="review" onclick="document.getElementById('review-tab').scrollIntoView({behavior:'smooth'})">Review{% if _has_update.v %}<span class="tab-badge">&bull;</span>{% endif %}</button>
             {% endif %}
+            {% if horizon %}
+            <span class="horizon-tooltip {{ horizon.color }}" aria-label="Time until Friday 3pm cutoff">{{ horizon.label }}</span>
+            {% endif %}
             <span id="session-clock" onclick="studyClock.toggle()" title="Click to pause/resume">0m</span>
+        </div>
+
+        {# Strips below the topbar. Rendered here (after #study-topbar)
+         # so the fixed 48px topbar doesn't cover them — previously these
+         # sat at body level and were hidden behind the topbar.
+         # The persona-indicator strip is intentionally NOT included: it
+         # was internal architecture leaking into UI. Bryan doesn't need
+         # to see "Research / Composing / Editing Partner" — the AI just
+         # acts appropriately for the phase. #}
+        <div class="topbar-stack">
+            {% include "partials/cutoff_banner.html" %}
+            {% include "partials/time_coach_strip.html" %}
+            {% include "partials/v2_phase_picker.html" %}
         </div>
 
         <div id="study-main">
@@ -59,8 +77,7 @@
             <div id="card-area">
                 {% if is_child %}
                 <div class="parent-card-banner">
-                  From parent session: <a href="/study/session/{{ parent_session.id }}">{{ parent_session.passage_ref }}</a>
-                  (broad exegesis, read-only)
+                  Part of series: <a href="/study/session/{{ parent_session.id }}">{{ parent_session.passage_ref }}</a>
                 </div>
                 {% endif %}
                 {% include "partials/study_card.html" %}
@@ -73,6 +90,18 @@
               <p>Return when you've finished your prayer / translation / digest work.</p>
             </div>
             {% else %}
+            {# Sources column — tool-call results (Bible, lexicon, grammar,
+             # commentary, search hits) used to stream into the conversation
+             # thread inline. As the AI searched, the chat kept getting pushed
+             # upward, making it hard to read. Tool results now collect here
+             # in a dedicated left panel; the chat stays a single column on
+             # the right where it can be followed without interruption. #}
+            <aside id="sources-column" aria-label="Research sources">
+                <div class="sources-header">Sources</div>
+                <div id="sources-list" class="sources-list">
+                    <p class="sources-empty">As the AI searches your library, results land here.</p>
+                </div>
+            </aside>
             <div id="conversation-column">
                 {% if committed_decisions is defined and open_decision_keys is defined %}
                 {% include "partials/decisions_panel.html" %}
@@ -135,14 +164,32 @@
     {% include 'partials/series_split_modal.html' %}
 
     <script src="/static/htmx.min.js"></script>
-    <script src="/static/study.js?v=9"></script>
-    <script src="/static/dictation.js?v=11"></script>
+    <script src="/static/study.js?v=11"></script>
+    <script src="/static/dictation.js?v=14"></script>
     <script>
         window.studySessionId = {{ session.id }};
         window.studyMode = "{{ mode }}";
         if (typeof studyClock !== 'undefined') {
             studyClock.start({{ session.total_elapsed_seconds }});
         }
+        (function () {
+            const pd = document.getElementById('preach-date-input');
+            if (!pd) return;
+            pd.addEventListener('change', async () => {
+                try {
+                    const r = await fetch('/study/session/' + pd.dataset.sessionId + '/preach-date', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({date: pd.value || null}),
+                    });
+                    if (!r.ok) {
+                        console.warn('preach-date save failed', r.status);
+                    }
+                } catch (e) {
+                    console.warn('preach-date network error', e);
+                }
+            });
+        })();
     </script>
 </body>
 </html>

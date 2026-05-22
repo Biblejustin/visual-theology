@@ -203,18 +203,6 @@ body {
     color: #e8e7e4;
     flex: 1;
 }
-.resume-persona {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 3px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-weight: 600;
-}
-.resume-persona.persona-silent    { background: #2a2a35; color: #888; }
-.resume-persona.persona-research  { background: #1e3a4a; color: #a8d8ea; }
-.resume-persona.persona-composing { background: #3a2e1e; color: #f4d4a8; }
-.resume-persona.persona-editing   { background: #3a1e1e; color: #f4a8a8; }
 .resume-card-meta {
     font-size: 13px;
     color: #8a8275;
@@ -253,43 +241,61 @@ body {
     text-align: center;
 }
 
+/* Card = horizontal row: link grows to fill, delete ✕ pinned right.
+ * Previous design used a full-width red Delete bar BELOW each row which
+ * dominated the visual hierarchy and made accidental delete easy. The
+ * absolute-position attempt at fixing that placed the button to the
+ * left of its containing row instead — switched to flex. */
 .session-card {
-    margin-bottom: 12px;
+    display: flex;
+    align-items: stretch;
+    margin-bottom: 6px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
 }
+.session-card:hover { border-color: rgba(255, 255, 255, 0.15); }
 
 .recent-session-link {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
     color: var(--text);
     text-decoration: none;
+    flex: 1;
+    min-width: 0;
 }
 
-.recent-session-link:hover {
-    border-color: rgba(255, 255, 255, 0.15);
+.session-card form {
+    /* `flex: 0 0 max-content` so the form sizes to its button content
+     * (~33px) instead of expanding to fill the parent flex container.
+     * Plain `flex: 0 0 auto` resolved flex-basis to the form's block
+     * `width:auto` (= full parent width), which squashed the link to
+     * 32px. */
+    display: flex;
+    align-items: stretch;
+    flex: 0 0 max-content;
+    margin: 0;
 }
-
 .session-delete-btn {
-    display: block;
-    width: 100%;
-    margin-top: 4px;
-    padding: 6px;
     border: none;
-    border-radius: var(--radius);
-    background: #c0392b;
-    color: #fff;
-    font-size: 13px;
-    font-weight: 500;
+    background: transparent;
+    color: var(--text-muted);
+    padding: 0 12px;
+    font-size: 16px;
+    line-height: 1;
     cursor: pointer;
-    transition: background 0.15s;
+    opacity: 0.35;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    font-weight: 600;
 }
-
+.session-card:hover .session-delete-btn,
+.session-delete-btn:focus-visible { opacity: 1; }
 .session-delete-btn:hover {
-    background: #e74c3c;
+    color: #e74c3c;
+    background: rgba(231, 76, 60, 0.1);
 }
 
 .recent-session-link .passage {
@@ -352,6 +358,30 @@ body {
     flex-shrink: 0;
 }
 
+.preach-date-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+.preach-date-control input[type="date"] {
+    background: rgba(255,255,255,0.05);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 11px;
+    font-family: inherit;
+    color-scheme: dark;
+}
+.preach-date-control input[type="date"]:focus {
+    outline: 1px solid var(--accent);
+    outline-offset: 1px;
+}
+.preach-date-control .saved-flash { color: var(--green); margin-left: 4px; }
+
 .topbar-dots {
     display: flex;
     align-items: center;
@@ -409,8 +439,15 @@ body {
 
 /* ── Main Area ──────────────────────────────────────────────────────────── */
 
-#study-main {
+/* Spacer + container for strips that sit below the fixed topbar
+ * (cutoff banner, persona indicator, time-coach rings, v2 phase picker).
+ * The margin-top reserves the 48px the fixed topbar occupies, so the
+ * first visible strip lands JUST below the topbar instead of behind it. */
+.topbar-stack {
     margin-top: var(--topbar-h);
+}
+
+#study-main {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -431,8 +468,11 @@ body {
     overflow-y: auto;
     padding: 40px 20px;
     display: flex;
-    justify-content: center;
-    align-items: flex-start;
+    /* Stack children vertically — parent-card-banner above, study-card
+     * below. Previously default row direction put the banner next to
+     * the card and squished both columns on narrow viewports. */
+    flex-direction: column;
+    align-items: center;
 }
 
 #card-area::-webkit-scrollbar { width: 5px; }
@@ -825,6 +865,96 @@ body {
 .btn-secondary:hover {
     border-color: rgba(255, 255, 255, 0.2);
     color: var(--text);
+}
+
+/* ── Sources Column ─────────────────────────────────────────────────────── */
+/* Research/tool results land here instead of in the conversation thread.
+ * Previously every Bible / lexicon / grammar / commentary lookup pushed
+ * the chat upward as the AI streamed — Bryan couldn't follow the chat
+ * while it was searching. Tool results now collect in this left panel;
+ * the chat remains a single uninterrupted column. */
+#sources-column {
+    flex: 0 0 300px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    min-width: 0;
+}
+.sources-header {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    padding: 12px 16px 8px;
+    font-weight: 600;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+}
+.sources-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.sources-empty {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-style: italic;
+    margin: 8px 4px;
+    line-height: 1.5;
+}
+.source-card {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 12px;
+}
+.source-card.pending {
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+.source-card .source-spinner {
+    width: 10px; height: 10px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: source-spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+@keyframes source-spin { to { transform: rotate(360deg); } }
+.source-card details summary {
+    padding: 8px 10px;
+    cursor: pointer;
+    color: var(--text);
+    font-weight: 500;
+    list-style: none;
+}
+.source-card details summary::-webkit-details-marker { display: none; }
+.source-card details summary::before {
+    content: '▸ ';
+    color: var(--text-muted);
+    transition: transform 0.15s ease;
+    display: inline-block;
+}
+.source-card details[open] summary::before { transform: rotate(90deg); }
+.source-card .tool-body {
+    padding: 0 10px 10px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 360px;
+    overflow-y: auto;
 }
 
 /* ── Conversation Column ────────────────────────────────────────────────── */
@@ -1593,6 +1723,15 @@ body {
     gap: 4px;
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
 }
+/* The chat input + outline-add live at the bottom of the page on a
+ * scroll-locked layout (body.session-layout overflow:hidden). Opening
+ * the mic picker downward there hides it past the viewport edge — flip
+ * it to open upward. */
+#input-area .mic-picker,
+.sidebar-footer .mic-picker {
+    top: auto;
+    bottom: calc(100% + 4px);
+}
 .mic-picker[hidden] {
     display: none;
 }
@@ -1760,6 +1899,32 @@ body {
   #card-area {
     padding: 16px 12px;
   }
+
+  /* Stack the Read-and-Translate side-by-side card vertically on
+   * narrow viewports. Default row layout produced ~180px columns and
+   * the Greek text broke after every word. */
+  .card-side-by-side { flex-direction: column; }
+  .card-side-by-side .side-by-side-left,
+  .card-side-by-side .side-by-side-right { width: 100%; max-height: none; }
+  .card-side-by-side .card-textarea { min-height: 140px; }
+
+  /* Preach-date input shrinks on mobile so it doesn't push the clock
+   * + horizon chip off the right edge of the topbar. */
+  .preach-date-control .preach-date-label { display: none; }
+  .preach-date-control input[type="date"] { font-size: 10px; padding: 2px 4px; }
+
+  /* Sources panel collapses to a thin auto-hiding drawer on mobile so it
+   * doesn't steal vertical space above the chat. Below 700px it sits as
+   * a normal scrollable block above the conversation. */
+  #sources-column {
+    flex: 0 0 auto;
+    max-height: 28vh;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    width: 100%;
+  }
+  .sources-header { padding: 8px 12px 4px; font-size: 10px; }
+  .sources-list { padding: 4px 8px 8px; }
 
   /* Conversation thread is the main mobile surface */
   #conversation-column { width: 100%; }

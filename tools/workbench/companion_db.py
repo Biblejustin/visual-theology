@@ -369,6 +369,13 @@ class CompanionDB:
             conn.execute("ALTER TABLE sessions ADD COLUMN next_action_text TEXT")
         if 'next_action_set_for_v2_phase' not in existing_session_cols:
             conn.execute("ALTER TABLE sessions ADD COLUMN next_action_set_for_v2_phase TEXT")
+        # Per-session preach date — when Bryan is delivering THIS sermon.
+        # Used by Time Coach + horizon countdown to scope "Friday 3pm
+        # cutoff" to the correct week; manually editable in the topbar.
+        # Stored as ISO YYYY-MM-DD; NULL means "not set" (default
+        # falls back to "next Sunday" elsewhere).
+        if 'preach_date' not in existing_session_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN preach_date TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)")
         # Homiletics engine: insight storage + claim embeddings + outline tag cache
         conn.executescript("""
@@ -743,6 +750,16 @@ class CompanionDB:
                 WHERE id = ?
             """, (phase, timer_seconds, self._now(), session_id))
 
+    def set_preach_date(self, session_id, preach_date):
+        """Persist the date Bryan will preach this sermon (ISO YYYY-MM-DD
+        or None to clear). Returns affected rowcount so endpoint callers
+        can detect a missing session_id."""
+        with self._safe_write() as conn:
+            cur = conn.execute(
+                "UPDATE sessions SET preach_date = ?, updated_at = ? WHERE id = ?",
+                (preach_date, self._now(), session_id))
+            return cur.rowcount
+
     def set_next_action(self, session_id, text, v2_phase):
         """Cache an EF-prosthesis next-action sentence + the v2 phase it
         was generated for. Caller regenerates whenever
@@ -777,23 +794,28 @@ class CompanionDB:
     def transition_v2_phase(self, session_id, v2_phase):
         """Atomic v2-phase transition: SELECT old + conditional UPDATE +
         log exit/enter events, all inside a single BEGIN IMMEDIATE
-        transaction. This is the concurrency-safe path for the picker
-        endpoint — two simultaneous requests will serialize on the
-        writer lock so phase_events stay balanced.
+        transaction.
+
+        Also syncs legacy current_phase so the UI machinery (card vs
+        conversation mode, which card template renders, prayer/translation/
+        digestion textareas) lands on the right screen. Previously the
+        picker only updated v2_phase, leaving legacy stale — Bryan saw
+        the picker say 'Phase 2 Read & Translate' but the Greek text +
+        translation textarea never appeared because legacy phase was
+        still on a non-card key.
 
         Returns (status, old_v2_phase):
           ('missing', None)   — session row doesn't exist
           ('no_change', None) — session exists but already at v2_phase
           ('changed', old)    — transitioned, events logged
-
-        phase_events is in the same SQLite database (companion.db), so
-        we can write to it from this connection without a second store.
         """
+        from v2_phases import legacy_phase_for_v2
+        new_legacy = legacy_phase_for_v2(v2_phase)
         conn = self._conn()
         try:
             conn.execute("BEGIN IMMEDIATE")  # writer lock → serializes concurrent calls
             row = conn.execute(
-                "SELECT v2_phase FROM sessions WHERE id = ?",
+                "SELECT v2_phase, current_phase FROM sessions WHERE id = ?",
                 (session_id,)
             ).fetchone()
             if row is None:
@@ -804,12 +826,17 @@ class CompanionDB:
                 conn.execute("ROLLBACK")
                 return ('no_change', None)
             now = self._now()
+            # Reset the timer to the budget for the new phase. Bryan's
+            # phase ring depends on this; without the reset, the picker
+            # would put him in a phase whose ring already showed depleted.
+            new_timer = PHASE_TIMERS.get(new_legacy or row['current_phase'], 1800)
             conn.execute(
-                "UPDATE sessions SET v2_phase = ?, updated_at = ? WHERE id = ?",
-                (v2_phase, now, session_id))
+                "UPDATE sessions SET v2_phase = ?, current_phase = COALESCE(?, current_phase), "
+                "timer_remaining_seconds = ?, timer_paused = 0, updated_at = ? "
+                "WHERE id = ?",
+                (v2_phase, new_legacy, new_timer, now, session_id))
             # Log the exit/enter events under the same transaction so a
-            # crash between them can't leave the log unbalanced. phase_events
-            # table is owned by session_analytics but lives in the same DB.
+            # crash between them can't leave the log unbalanced.
             if old:
                 conn.execute(
                     "INSERT INTO phase_events (session_id, phase, event_type, timestamp) "

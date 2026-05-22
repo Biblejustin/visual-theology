@@ -78,38 +78,45 @@ def test_resume_card_omits_next_when_no_cache(client):
     assert 'resume-card-next' not in body
 
 
-def test_resume_card_persona_follows_v2_phase(client):
-    """Card persona chip matches what the session page shows
-    (consistent with the persona display fix from review-round-3)."""
+def test_resume_card_no_persona_chip(client):
+    """The persona chip ('research'/'composing'/'editing') used to leak
+    internal architecture onto the resume card. Bryan doesn't need to
+    see which persona is on duty — the AI just acts right for the phase.
+    Make sure none of the persona class names render."""
     import app as app_module
     sid = _new_session(client)
     app_module.companion_db.update_v2_phase(sid, 'p16_ruthless_edit')
     r = client.get('/study/')
     body = r.get_data(as_text=True)
-    assert 'persona-editing' in body
+    for chip in ('persona-research', 'persona-composing',
+                 'persona-editing', 'persona-silent', 'resume-persona'):
+        assert chip not in body, f"resume card still leaks {chip!r}"
 
 
-def test_resume_card_prefers_parent_over_child(client):
-    """When a series exists, the resume card should surface the parent,
-    not a child. Otherwise the card hides the canonical session."""
+def test_resume_card_surfaces_most_recent_child_when_active(client):
+    """Children are first-class preaching units. When a child is the
+    most-recently touched session (which is the typical week-of state
+    for series prep), the resume card surfaces THAT child, not the
+    less-recently-touched series parent."""
     import app as app_module
     parent_sid = _new_session(client, 'Romans 1:1-32')
-    # Synthesize a child session pointing at the parent.
+    # Synthesize a child session pointing at the parent, touched LATER.
     conn = app_module.companion_db._conn()
-    conn.execute(
+    cur = conn.execute(
         "INSERT INTO sessions (passage_ref, book, chapter, verse_start, verse_end, "
         "genre, current_phase, timer_remaining_seconds, status, parent_session_id, "
         "created_at, updated_at) "
         "VALUES ('Romans 1:1-7', 45, 1, 1, 7, 'epistle', 'prayer', 900, 'active', "
         "?, datetime('now', '+1 minute'), datetime('now', '+1 minute'))",
         (parent_sid,))
+    child_sid = cur.lastrowid
     conn.commit()
     conn.close()
     r = client.get('/study/')
     body = r.get_data(as_text=True)
-    # Parent surfaces, not the child (even though child is newer).
-    assert 'Romans 1:1-32' in body
-    assert f'/study/session/{parent_sid}' in body
+    # The newer child wins.
+    assert 'Romans 1:1-7' in body
+    assert f'/study/session/{child_sid}' in body
 
 
 # ── _humanize_since ──────────────────────────────────────────────────

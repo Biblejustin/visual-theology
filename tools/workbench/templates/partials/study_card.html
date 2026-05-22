@@ -88,7 +88,7 @@
         {% else %}<div></div>{% endif %}
         <form method="POST" action="/study/session/{{ session.id }}/card/next" id="card-next-form">
             <input type="hidden" name="response" id="hidden-response">
-            <button type="submit" class="btn btn-primary" onclick="copyCardResponse()" {% if is_child %}disabled{% endif %}>
+            <button type="submit" class="btn btn-primary" onclick="copyCardResponse()">
                 {% if phase_index == total_phases - 1 %}Begin Conversation &rarr;{% else %}Next &rarr;{% endif %}
             </button>
         </form>

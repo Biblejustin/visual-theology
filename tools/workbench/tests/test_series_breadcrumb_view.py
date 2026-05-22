@@ -53,15 +53,22 @@ def test_breadcrumb_renders_siblings_on_parent_view(client):
     assert 'series-breadcrumb' in html  # CSS hook
 
 
-def test_child_view_inherits_parent_cards_read_only(client):
+def test_child_view_uses_own_cards_and_shows_series_breadcrumb(client):
+    """Children are first-class: their card view loads their OWN data
+    (not the parent's) and shows a 'Part of series' link back to the
+    parent for context. Previously children inherited the parent's
+    card text read-only — that broke Bryan's actual weekly workflow
+    where each week's preached sermon is a child."""
     parent_id, child_id = _seed_split(app_module.companion_db)
-    # Child is at phase 'read_translate'
-    conn = app_module.companion_db._conn()
+    db = app_module.companion_db
+    db.save_card_response(child_id, 'read_translate', 0, 'Child-own translation')
+    conn = db._conn()
     conn.execute(
         "UPDATE sessions SET current_phase='read_translate' WHERE id=?", (child_id,))
     conn.commit()
     conn.close()
     resp = client.get(f'/study/session/{child_id}')
     html = resp.get_data(as_text=True)
-    assert 'Broad exegesis text' in html
-    assert 'From parent session' in html
+    assert 'Child-own translation' in html
+    assert 'Broad exegesis text' not in html  # parent's text must NOT bleed in
+    assert 'Part of series' in html
