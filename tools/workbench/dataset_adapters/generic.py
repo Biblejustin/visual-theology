@@ -5,6 +5,7 @@ Replace with bespoke per-family adapters in follow-on slices as needs become cle
 from __future__ import annotations
 
 import logging
+import re
 
 import dataset_tools  # attribute access so monkeypatch works in tests
 
@@ -12,6 +13,8 @@ from dataset_registry import Dataset
 from . import envelope
 
 logger = logging.getLogger(__name__)
+
+_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _discover_tables(filename: str) -> list[str]:
@@ -31,7 +34,16 @@ def _sample_rows(filename: str, table: str, reference: dict, limit: int) -> list
     """Best-effort: pull up to `limit` rows from `table`, tagging each with
     its source table. We don't try to filter by passage here — many of these
     datasets aren't passage-keyed in an obvious column, so we let the agent
-    inspect what came back."""
+    inspect what came back.
+
+    `table` is interpolated into SQL (sqlite3 doesn't bind table identifiers),
+    so we whitelist it to a standard SQL identifier first. Today the source
+    is trusted DB metadata; this guards future call paths that may surface
+    agent-influenced names through the registry."""
+    if not _SAFE_IDENT.match(table or ""):
+        logger.warning("generic adapter: rejecting unsafe table name %r for %s",
+                       table, filename)
+        return []
     try:
         reader = dataset_tools._get_reader()
         if reader is None:

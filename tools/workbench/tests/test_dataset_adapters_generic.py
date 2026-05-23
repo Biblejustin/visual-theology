@@ -83,3 +83,35 @@ def test_generic_adapter_handles_dataset_tools_unreachable(monkeypatch):
         {"book": 66, "chapter": 3, "verse_start": 25}, _ds("X.lbsptd", "thematic"))
     assert out["results"] == []
     assert "unreachable" in out["note"].lower() or "no matches" in out["note"].lower()
+
+
+def test_generic_adapter_rejects_unsafe_table_names(monkeypatch):
+    """Defense-in-depth: even if a hostile/malformed table name reaches
+    _sample_rows (e.g. via a future agent-facing parameter), it must be
+    whitelisted to a valid SQL identifier before interpolation."""
+    import dataset_tools
+    calls = []
+    class _R:
+        def query_dataset(self, fname, db, sql):
+            calls.append(sql)
+            return [{"x": 1}]
+    monkeypatch.setattr(dataset_tools, "_get_reader", lambda: _R(), raising=False)
+    # Discover returns one safe + several unsafe names; the unsafe ones must
+    # be skipped without touching the SQL.
+    monkeypatch.setattr(dataset_tools, "query_dataset_tables",
+                        lambda f, db: ["GoodTable",
+                                       "Entries; DROP TABLE Users; --",
+                                       "weird-name",
+                                       "1starts_with_digit",
+                                       "Has Space",
+                                       "Good_Table_2"], raising=False)
+    out = adapter_for("thematic").query(
+        {"book": 66, "chapter": 3, "verse_start": 25},
+        _ds("X.lbsptd", "thematic"))
+    # Only the two safe identifiers (GoodTable, Good_Table_2) reach the SQL.
+    assert len(calls) == 2
+    assert all("DROP TABLE" not in s for s in calls)
+    assert all("weird-name" not in s for s in calls)
+    # And we still got results from the safe tables.
+    assert any(r.get("_table") == "GoodTable" for r in out["results"])
+    assert any(r.get("_table") == "Good_Table_2" for r in out["results"])
