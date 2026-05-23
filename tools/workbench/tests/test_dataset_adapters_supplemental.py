@@ -82,9 +82,10 @@ def test_supplemental_adapter_uses_word_cache_string_refs(monkeypatch):
     assert out["results"] == [{"reference": "Romans 3:25", "figure": "metonymy"}]
 
 
-def test_adapter_for_misc_falls_back_gracefully_when_generic_missing():
-    """Until Task 4 lands generic.py, adapter_for('misc') must NOT crash —
-    it returns a no-op adapter that yields the standard envelope with a note."""
+def test_adapter_for_misc_returns_generic_adapter_after_task4():
+    """Once generic.py exists (Task 4+), adapter_for('misc') returns a real
+    GenericAdapter — verify by checking the envelope shape and that the note
+    is the GenericAdapter's diagnostic, not the _UnavailableAdapter's."""
     from dataset_adapters import adapter_for
     ds = Dataset(dataset_id="LLS:ODD", title="Odd dataset", type="lbx.other",
                  filename="WEIRD.lbszzz", location="/x/WEIRD.lbszzz",
@@ -92,4 +93,8 @@ def test_adapter_for_misc_falls_back_gracefully_when_generic_missing():
     out = adapter_for("misc").query({"book": 66, "chapter": 3, "verse_start": 25}, ds)
     assert out["dataset"] == "LLS:ODD"
     assert out["results"] == []
-    assert "not yet available" in out["note"]
+    # Generic adapter's diagnostic — NOT _UnavailableAdapter's "not yet available"
+    note = (out.get("note") or "").lower()
+    assert "not yet available" not in note, (
+        f"adapter_for('misc') still returned _UnavailableAdapter: {note!r}")
+    assert "unreachable" in note or "no inspectable tables" in note or "no matches" in note
