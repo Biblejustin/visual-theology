@@ -644,6 +644,39 @@ TOOL_DEFINITIONS = [
             "required": ["dataset_id", "reference"],
         },
     },
+    {
+        "name": "lookup_syntax_graph",
+        "description": (
+            "Look up the syntactic phrase structure for a Bible passage from "
+            "Cascadia Syntax Graphs (NT) or Andersen-Forbes Phrase Markers (OT). "
+            "Returns digested head/dependents/relation info — directly useful for "
+            "genitive, participle, and clause-structure questions. Pair with "
+            "lookup_grammar (Wallace prose) for the textual + structural picture."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reference": {"type": "string", "description": "Bible reference, e.g. 'Romans 3:22'."},
+                "testament": {"type": "string", "enum": ["nt", "ot"], "description": "Default 'nt'."},
+            },
+            "required": ["reference"],
+        },
+    },
+    {
+        "name": "lookup_bullinger_figure",
+        "description": (
+            "Look up Bullinger's *Figures of Speech Used in the Bible* for a passage. "
+            "Returns the rhetorical figures (metaphor, metonymy, hendiadys, chiasm, etc.) "
+            "Bullinger catalogues at this reference. Classic homiletical mine."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reference": {"type": "string", "description": "Bible reference, e.g. 'Romans 3:25'."},
+            },
+            "required": ["reference"],
+        },
+    },
 ]
 
 
@@ -687,6 +720,10 @@ def execute_tool(tool_name, tool_input, session_context):
             return _list_datasets(tool_input)
         elif tool_name == "query_dataset":
             return _query_dataset(tool_input)
+        elif tool_name == "lookup_syntax_graph":
+            return _lookup_syntax_graph(tool_input)
+        elif tool_name == "lookup_bullinger_figure":
+            return _lookup_bullinger_figure(tool_input)
         elif tool_name == "suggest_search_terms":
             return _suggest_search_terms(tool_input, session_context)
         elif tool_name == "find_illustration":
@@ -840,6 +877,48 @@ def _query_dataset(tool_input):
     except Exception as e:
         return {"error": f"query_failed: {type(e).__name__}: {e}",
                 "dataset_id": dataset_id, "reference": ref_str}
+
+
+def _lookup_syntax_graph(tool_input):
+    """Pre-select a syntax dataset by testament, then delegate to the adapter."""
+    ref_str = (tool_input.get("reference") or "").strip()
+    testament = (tool_input.get("testament") or "nt").lower()
+    if not ref_str:
+        return {"error": "reference is required"}
+    ref = parse_reference(ref_str)
+    if not ref:
+        return {"error": "bad_reference", "reference": ref_str}
+    reg = get_registry()
+    syntax_ds = reg.by_family("syntax")
+    # Heuristic dataset pick: NT → first 'Cascadia'-titled; OT → first 'Andersen-Forbes'-titled.
+    needle = "cascadia" if testament == "nt" else "andersen-forbes"
+    chosen = next((d for d in syntax_ds if needle in (d.title or "").lower()), None)
+    if chosen is None and syntax_ds:
+        chosen = syntax_ds[0]  # last resort
+    if chosen is None:
+        return {"error": "no_syntax_dataset"}
+    try:
+        return adapter_for("syntax").query(ref, chosen)
+    except Exception as e:
+        return {"error": f"syntax_query_failed: {type(e).__name__}: {e}"}
+
+
+def _lookup_bullinger_figure(tool_input):
+    """Pre-select Bullinger's Figures of Speech, then delegate to the adapter."""
+    ref_str = (tool_input.get("reference") or "").strip()
+    if not ref_str:
+        return {"error": "reference is required"}
+    ref = parse_reference(ref_str)
+    if not ref:
+        return {"error": "bad_reference", "reference": ref_str}
+    reg = get_registry()
+    chosen = next((d for d in reg.list_all() if "bullinger" in (d.title or "").lower()), None)
+    if chosen is None:
+        return {"error": "bullinger_not_in_library"}
+    try:
+        return adapter_for(chosen.schema_family).query(ref, chosen)
+    except Exception as e:
+        return {"error": f"bullinger_query_failed: {type(e).__name__}: {e}"}
 
 
 def _read_library_section(tool_input):
