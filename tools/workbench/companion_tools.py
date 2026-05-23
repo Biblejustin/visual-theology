@@ -5,8 +5,11 @@ The companion agent formats results for display.
 """
 
 import json
+import logging
 import os
 import sys
+
+logger = logging.getLogger(__name__)
 
 # Add parent tools dir to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -148,7 +151,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "lookup_grammar",
-        "description": "Search Greek and Hebrew grammars in Bryan's library. Available: Wallace (Exegetical Syntax), Robertson, Blass-Debrunner, Discourse Grammar, Morphology of Biblical Greek, Verbal Aspect, Idioms of the GNT, GKC (Gesenius Hebrew), Waltke-O'Connor. Use for questions about syntax, morphology, verbal aspect, clause structure, and grammatical constructions.",
+        "description": "Search Greek and Hebrew grammars in Bryan's library by FULL TEXT (not headword). Available: Wallace (Exegetical Syntax), Robertson, Blass-Debrunner, Discourse Grammar, Morphology of Biblical Greek, Verbal Aspect, Idioms of the GNT, GKC (Gesenius Hebrew), Waltke-O'Connor. Use for questions about syntax, morphology, verbal aspect, clause structure, and grammatical constructions — including discursive topics like 'subjective vs. objective genitive' that headword lookups would miss. Returns up to 2 matching sections with full text suitable for direct quotation. If `grammars` omitted, searches all NT grammars (Greek) when testament='nt', or all OT (Hebrew) when testament='ot'.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -910,6 +913,13 @@ def _lookup_grammar(tool_input, session_context):
         result = get_searcher().search(query, limit=15)
     except Exception as e:
         return {"error": f"grammar_search_failed: {type(e).__name__}: {e}", "query": query}
+    if result and result.get("ok") is False:
+        return {
+            "error": result.get("error", "search_unavailable"),
+            "message": result.get("message", ""),
+            "query": query,
+            "testament": testament,
+        }
     hits = (result or {}).get("results") or []
 
     entries = []
@@ -922,7 +932,16 @@ def _lookup_grammar(tool_input, session_context):
         art = sections[0].get("article_num")
         if art is None:
             continue
-        text = read_article_text(h["filename"], int(art), max_chars=6000)
+        try:
+            text = read_article_text(h["filename"], int(art), max_chars=6000)
+        except Exception:
+            logger.warning(
+                "grammar lookup failed for %s (%s)",
+                h.get("abbrev", "?"),
+                h.get("filename", "?"),
+                exc_info=True,
+            )
+            continue
         if not text:
             continue
         entries.append({
