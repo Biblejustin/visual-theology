@@ -36,3 +36,49 @@ def test_always_active_guardrails_forbid_fabricated_quotes():
     assert "verbatim" in src.lower()
     # And the rule must mention read_library_section so the LLM knows the escape from punting.
     assert "read_library_section" in src
+
+
+from persona_prompts import (
+    build_research_partner_prompt,
+    build_composing_partner_prompt,
+    build_editing_partner_prompt,
+)
+
+
+def _kw():
+    return dict(
+        passage="Romans 3:25-26", genre="epistle", session_elapsed_seconds=0,
+        current_phase="p04_exegesis", card_work_summary="", coaching_context="")
+
+
+def test_source_fidelity_rule_in_research_prompt():
+    p = build_research_partner_prompt(**_kw())
+    assert "SOURCE FIDELITY" in p, \
+        "research persona must carry the SOURCE FIDELITY (anti-fabrication) rule"
+    assert "verbatim" in p.lower()
+    assert "read_library_section" in p
+
+
+def test_source_fidelity_rule_in_composing_prompt():
+    # build_composing_partner_prompt accepts the same kw set as research; if it
+    # raises TypeError on extra kwargs, narrow to the supported ones.
+    try:
+        p = build_composing_partner_prompt(**_kw())
+    except TypeError:
+        # Fall back: build with whatever the function accepts.
+        import inspect
+        sig = inspect.signature(build_composing_partner_prompt)
+        kw = {k: v for k, v in _kw().items() if k in sig.parameters}
+        p = build_composing_partner_prompt(**kw)
+    assert "SOURCE FIDELITY" in p
+
+
+def test_source_fidelity_rule_in_editing_prompt():
+    try:
+        p = build_editing_partner_prompt(**_kw())
+    except TypeError:
+        import inspect
+        sig = inspect.signature(build_editing_partner_prompt)
+        kw = {k: v for k, v in _kw().items() if k in sig.parameters}
+        p = build_editing_partner_prompt(**kw)
+    assert "SOURCE FIDELITY" in p
