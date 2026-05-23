@@ -23,6 +23,8 @@ from study import (
     get_resource_articles, read_article_text,
 )
 from logos_search import get_searcher
+from dataset_registry import get_registry
+from dataset_adapters import adapter_for
 
 # ── Lexicon/Grammar resource registry ──────────────────────────────────────
 # Resources confirmed readable, organized by use case.
@@ -608,6 +610,40 @@ TOOL_DEFINITIONS = [
             "required": ["mentor_key"],
         },
     },
+    {
+        "name": "list_datasets",
+        "description": (
+            "List the research datasets present in Bryan's Logos library. "
+            "Use this BEFORE picking a dataset to query — there are ~115 datasets "
+            "covering topical sets ('All the Prayers in the Bible'), syntax graphs, "
+            "ontologies, cross-references, biblical entities, and more. "
+            "Optional `category` filters by schema_family (supplemental, xref, entity, "
+            "syntax, clauses, grammar_ds, ontology, thematic, misc) or by lbx type."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Optional schema_family or lbx.* type filter."},
+            },
+        },
+    },
+    {
+        "name": "query_dataset",
+        "description": (
+            "Query any dataset in the registry by ID for a Bible passage. Returns "
+            "{dataset, dataset_type, title, results, note}. Use this for the long tail "
+            "of datasets that don't have a named tool. Get dataset_id from list_datasets()."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dataset_id": {"type": "string", "description": "Dataset id (e.g. 'LLS:BULLINGER') from list_datasets()."},
+                "reference":  {"type": "string", "description": "Bible reference, e.g. 'Romans 3:25-26'."},
+                "limit":      {"type": "integer", "description": "Max rows to return (default 25, max 100)."},
+            },
+            "required": ["dataset_id", "reference"],
+        },
+    },
 ]
 
 
@@ -647,6 +683,10 @@ def execute_tool(tool_name, tool_input, session_context):
             return _search_library(tool_input, session_context)
         elif tool_name == "read_library_section":
             return _read_library_section(tool_input)
+        elif tool_name == "list_datasets":
+            return _list_datasets(tool_input)
+        elif tool_name == "query_dataset":
+            return _query_dataset(tool_input)
         elif tool_name == "suggest_search_terms":
             return _suggest_search_terms(tool_input, session_context)
         elif tool_name == "find_illustration":
@@ -760,6 +800,46 @@ def _search_library(tool_input, session_context):
         "result_count": len(results),
         "results": results,
     }
+
+
+def _list_datasets(tool_input):
+    """List datasets in the registry, optionally filtered by schema_family or lbx type."""
+    cat = (tool_input.get("category") or "").strip().lower() or None
+    reg = get_registry()
+    all_ds = reg.list_all()
+    if cat:
+        ds = [d for d in all_ds if d.schema_family == cat or d.type.lower() == cat]
+    else:
+        ds = all_ds
+    return {
+        "count": len(ds),
+        "datasets": [
+            {"dataset_id": d.dataset_id, "title": d.title,
+             "family": d.schema_family, "type": d.type}
+            for d in ds
+        ],
+    }
+
+
+def _query_dataset(tool_input):
+    """Look up a dataset by id and route to the adapter for its schema family."""
+    dataset_id = (tool_input.get("dataset_id") or "").strip()
+    ref_str = (tool_input.get("reference") or "").strip()
+    if not dataset_id or not ref_str:
+        return {"error": "dataset_id and reference are required"}
+    limit = max(1, min(int(tool_input.get("limit", 25)), 100))
+    ds = get_registry().find(dataset_id)
+    if ds is None:
+        return {"error": "unknown_dataset", "dataset_id": dataset_id,
+                "message": "call list_datasets() to discover valid ids"}
+    ref = parse_reference(ref_str)
+    if not ref:
+        return {"error": "bad_reference", "reference": ref_str}
+    try:
+        return adapter_for(ds.schema_family).query(ref, ds, limit=limit)
+    except Exception as e:
+        return {"error": f"query_failed: {type(e).__name__}: {e}",
+                "dataset_id": dataset_id, "reference": ref_str}
 
 
 def _read_library_section(tool_input):
