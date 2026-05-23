@@ -6,9 +6,13 @@ key off the family rather than per-dataset bespoke code.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
+import threading
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 # Default paths (live library on this machine). Tests pass explicit paths.
 _DEFAULT_CATALOG = "/Volumes/External/Logos4/Data/e3txalek.5iq/LibraryCatalog/catalog.db"
@@ -78,10 +82,12 @@ class DatasetRegistry:
         self._by_id = {}
         if not (os.path.isfile(self._catalog_path)
                 and os.path.isfile(self._rm_path)):
+            logger.warning("dataset_registry: catalog or RM missing (%s / %s) — registry empty",
+                           self._catalog_path, self._rm_path)
             return
         try:
             conn = sqlite3.connect(self._catalog_path)
-            conn.execute(f"ATTACH '{self._rm_path}' AS rm")
+            conn.execute("ATTACH DATABASE ? AS rm", (self._rm_path,))
             rows = conn.execute("""
                 SELECT c.ResourceId, c.Title, c.Type, rm.Resources.Location
                 FROM Records c
@@ -89,7 +95,8 @@ class DatasetRegistry:
                 WHERE rm.Resources.Location LIKE '%.lbs%'
             """).fetchall()
             conn.close()
-        except sqlite3.Error:
+        except (sqlite3.Error, OSError) as err:
+            logger.warning("dataset_registry: load failed (%s) — registry empty", err, exc_info=True)
             return
         for rid, title, dtype, location in rows:
             if dtype in DENYLIST_TYPES:
@@ -114,11 +121,15 @@ class DatasetRegistry:
 
 # Module-level singleton (lazy).
 _singleton: DatasetRegistry | None = None
+_singleton_lock = threading.Lock()
 
 
-def get_registry() -> DatasetRegistry:
+def get_registry() -> "DatasetRegistry":
     global _singleton
     if _singleton is None:
-        _singleton = DatasetRegistry()
-        _singleton.load()
+        with _singleton_lock:
+            if _singleton is None:           # re-check inside the lock
+                reg = DatasetRegistry()
+                reg.load()
+                _singleton = reg
     return _singleton

@@ -78,3 +78,34 @@ def test_registry_survives_missing_dbs(tmp_path):
                               resource_manager_path=str(tmp_path / 'nope2.db'))
     reg.load()  # must not raise
     assert reg.list_all() == []
+
+
+def test_get_registry_is_thread_safe(monkeypatch):
+    """Two concurrent first-calls must produce ONE registry instance."""
+    import threading
+    import dataset_registry as dr
+    # Reset the singleton for this test.
+    monkeypatch.setattr(dr, '_singleton', None, raising=False)
+    instances = []
+    barrier = threading.Barrier(8)
+    def grab():
+        barrier.wait()
+        instances.append(dr.get_registry())
+    threads = [threading.Thread(target=grab) for _ in range(8)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    # All 8 threads must see the same singleton (same id).
+    assert len({id(x) for x in instances}) == 1
+
+
+def test_registry_tolerates_oserror_during_load(monkeypatch, tmp_path):
+    """A vanished mount / disk error must NOT crash the registry — it boots empty."""
+    import dataset_registry as dr
+    cat, rm = _make_fake_catalog(str(tmp_path))
+    reg = dr.DatasetRegistry(catalog_path=cat, resource_manager_path=rm)
+    import sqlite3
+    def boom(*a, **k):
+        raise OSError("simulated vanished mount")
+    monkeypatch.setattr(sqlite3, 'connect', boom)
+    reg.load()  # must not raise
+    assert reg.list_all() == []
