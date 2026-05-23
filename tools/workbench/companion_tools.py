@@ -427,6 +427,25 @@ TOOL_DEFINITIONS = [
         }
     },
     {
+        "name": "read_library_section",
+        "description": (
+            "Fetch the FULL, exact text of a library section found via search_library. "
+            "search_library returns only a ~500-char snippet; to quote a source verbatim "
+            "you MUST call this with the result's `filename` and the section's `article_num`. "
+            "Never quote a source from the snippet alone, and never quote anything this tool "
+            "(or another retrieval tool) did not return."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "description": "The `filename` from a search_library result, e.g. 'WALLACEGGBB.logos4'."},
+                "article_num": {"type": "integer", "description": "The section's `article_num` from a search_library result."},
+                "max_chars": {"type": "integer", "description": "Max characters to return (default 8000)."},
+            },
+            "required": ["filename", "article_num"],
+        },
+    },
+    {
         "name": "suggest_search_terms",
         "description": (
             "Ask Logos' query parser for completions/refinements for a partial query. "
@@ -622,6 +641,8 @@ def execute_tool(tool_name, tool_input, session_context):
             return _get_passage_context(tool_input, session_context)
         elif tool_name == "search_library":
             return _search_library(tool_input, session_context)
+        elif tool_name == "read_library_section":
+            return _read_library_section(tool_input)
         elif tool_name == "suggest_search_terms":
             return _suggest_search_terms(tool_input, session_context)
         elif tool_name == "find_illustration":
@@ -735,6 +756,22 @@ def _search_library(tool_input, session_context):
         "result_count": len(results),
         "results": results,
     }
+
+
+def _read_library_section(tool_input):
+    """Return the full exact text of a library section (resolves to read_article_text)."""
+    filename = (tool_input.get("filename") or "").strip()
+    article_num = tool_input.get("article_num")
+    if not filename or article_num is None:
+        return {"error": "filename and article_num are required (from a search_library result)"}
+    max_chars = max(500, min(int(tool_input.get("max_chars", 8000)), 30000))
+    try:
+        text = read_article_text(filename, int(article_num), max_chars=max_chars)
+    except Exception as e:
+        return {"error": f"read_failed: {type(e).__name__}: {e}"}
+    if not text:
+        return {"error": "no_text", "message": f"No text for {filename} article {article_num}."}
+    return {"filename": filename, "article_num": int(article_num), "text": text}
 
 
 def _suggest_search_terms(tool_input, session_context):
