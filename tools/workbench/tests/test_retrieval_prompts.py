@@ -53,8 +53,11 @@ def _kw():
 
 def test_source_fidelity_rule_in_research_prompt():
     p = build_research_partner_prompt(**_kw())
-    assert "SOURCE FIDELITY" in p, \
-        "research persona must carry the SOURCE FIDELITY (anti-fabrication) rule"
+    # Research persona gets SOURCE_FIDELITY_RULE (header "## Source Fidelity")
+    # rather than the full HOMILETICAL_GUARDRAILS (which would brand it as a
+    # coach — violating test_research_does_not_describe_self_as_coach).
+    assert "source fidelity" in p.lower(), \
+        "research persona must carry the source fidelity (anti-fabrication) rule"
     assert "verbatim" in p.lower()
     assert "read_library_section" in p
 

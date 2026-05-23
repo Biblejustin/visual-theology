@@ -16,7 +16,18 @@ from phase_cluster_router import persona_for_phase, persona_for_v2_phase
 from persona_tools import tool_defs_for_persona
 
 
+# ── Source Fidelity Rule (applies to ALL personas, including research) ────
+
+SOURCE_FIDELITY_RULE = """## Source Fidelity (Always Active)
+
+Never present a direct quotation — from a Church father, commentator, theologian, grammar, or confession — unless a retrieval tool returned it verbatim in this turn. If you don't have the exact text, say so plainly and describe the idea in your own words; do NOT invent attributed quotes. To quote a source found via search_library, first call read_library_section with its filename + article_num."""
+
+
 # ── Homiletical Guardrails ────────────────────────────────────────────────
+# NOTE: rule 6 below intentionally duplicates the body of SOURCE_FIDELITY_RULE.
+# The duplication is deliberate so the coach-framed prompt keeps its existing
+# all-caps "SOURCE FIDELITY" header (composing/editing tests + LLM-facing text
+# stay unchanged). If you edit one, edit the other.
 
 HOMILETICAL_GUARDRAILS = """
 ## Homiletical Guardrails (Always Active)

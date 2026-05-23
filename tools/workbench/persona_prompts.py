@@ -17,7 +17,7 @@ All three prompts share:
 Source: docs/superpowers/specs/2026-05-18-sermon-prep-agent-architecture-design-v2.md
 """
 
-from companion_agent import _format_time, HOMILETICAL_GUARDRAILS
+from companion_agent import _format_time, HOMILETICAL_GUARDRAILS, SOURCE_FIDELITY_RULE
 
 
 _GENRE_HINTS = {
@@ -332,7 +332,7 @@ Voice: Warm, direct, intellectually curious. Like a trusted colleague in the stu
 
 {_RESEARCH_PHASE_POSTURES}
 
-{HOMILETICAL_GUARDRAILS}
+{SOURCE_FIDELITY_RULE}
 
 ## Available Tools
 
