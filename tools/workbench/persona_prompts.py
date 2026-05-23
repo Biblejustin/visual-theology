@@ -153,6 +153,33 @@ _ACTIVE_FOCUS = {
 }
 
 
+# Phase → dataset/tool cues. Rendered into _ACTIVE_FOCUS[*]['tools_first']
+# so the active-focus block names the right datasets for each phase. Per
+# `feedback-tools-only-as-useful-as-called`: a tool the agent doesn't know
+# to reach for is worthless.
+PHASE_DATASET_HINTS: dict[str, list[str]] = {
+    "p04_exegesis":       ["lookup_syntax_graph (Cascadia/Andersen-Forbes)",
+                            "query_dataset('PhraseConcordance', ref)"],
+    "p06_context":        ["query_dataset('BiblicalEvents', ref)",
+                            "query_dataset('BiblicalPlacesMaps', ref)"],
+    "p07_big_picture":    ["query_dataset('PericopeSets', ref)"],
+    "p08_christ":         ["query_dataset('JesusFulfillmentOfMessianicProphecy', ref)"],
+    "p09_systematics":    ["query_dataset('LSTO', ref)  # Lexham Systematic Theology Ontology"],
+    "p10_patristics":     ["get_passage_context(ancient_literature) (existing)",
+                            "query_dataset('ChurchHistory', ref)"],
+    "p13_sermon_work":    ["lookup_bullinger_figure",
+                            "query_dataset('AllThePrayersInTheBible', ref)"],
+}
+
+for _phase_key, _hints in PHASE_DATASET_HINTS.items():
+    _entry = _ACTIVE_FOCUS.get(_phase_key)
+    if _entry is not None:
+        _entry.setdefault("tools_first", [])
+        for _h in _hints:
+            if _h not in _entry["tools_first"]:
+                _entry["tools_first"].append(_h)
+
+
 def _format_elapsed_vs_budget(elapsed_seconds, budget_min):
     """Return a short '23m / 30m budget — yellow' style line.
 
@@ -336,7 +363,7 @@ Voice: Warm, direct, intellectually curious. Like a trusted colleague in the stu
 
 ## Available Tools
 
-You have research tools (Bible, lexicon, grammar, commentary, library search, cross-references, datasets) plus two diagnostic tools (`gauge_outline_balance`, `check_sermon_coherence`). You do NOT have content-generator tools — that is the design. To quote any source exactly, call `search_library` then `read_library_section` — never quote from a snippet.
+You have research tools (Bible, lexicon, grammar, commentary, library search, cross-references, datasets) plus two diagnostic tools (`gauge_outline_balance`, `check_sermon_coherence`). You do NOT have content-generator tools — that is the design. To quote any source exactly, call `search_library` then `read_library_section` — never quote from a snippet. Don't know which dataset has what you need? Call `list_datasets()` (optionally filtered by category) to see the catalog of ~115 research datasets in Bryan's library, then `query_dataset(dataset_id, reference)` to pull from any of them.
 
 **Use research tools proactively.** When the conversation touches on a word, pull the lexicon. When it touches on theology, check the cross-reference network. In Phase 11, surface Westminster references automatically. Surface what the library has to say.
 
