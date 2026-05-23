@@ -144,6 +144,14 @@ class CompanionDB:
                 updated_at TEXT DEFAULT (datetime('now')),
                 UNIQUE(session_id, phase)
             );
+            CREATE TABLE IF NOT EXISTS sermon_pack_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL REFERENCES sessions(id),
+                artifact TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                source_breakdown_json TEXT NOT NULL,
+                mining_percentage REAL NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_card_responses_session ON card_responses(session_id, phase);
             CREATE INDEX IF NOT EXISTS idx_conversation_session ON conversation_messages(session_id, phase);
             CREATE INDEX IF NOT EXISTS idx_outline_session ON outline_nodes(session_id);
@@ -151,6 +159,8 @@ class CompanionDB:
             CREATE INDEX IF NOT EXISTS idx_questions_phase ON question_bank(phase, priority);
             CREATE INDEX IF NOT EXISTS idx_card_annotations_session ON card_annotations(session_id, phase);
             CREATE INDEX IF NOT EXISTS idx_card_notepads_session ON card_notepads(session_id, phase);
+            CREATE INDEX IF NOT EXISTS idx_sermon_pack_metrics_session
+                ON sermon_pack_metrics(session_id, generated_at DESC);
         """)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS sermons (
@@ -555,6 +565,36 @@ class CompanionDB:
 
     def _now(self):
         return datetime.now(timezone.utc).isoformat()
+
+    def save_sermon_pack_metric(self, *, session_id, artifact,
+                                source_breakdown, mining_percentage):
+        """Insert one metric row per artifact per generation."""
+        with self._safe_write() as conn:
+            cur = conn.execute(
+                "INSERT INTO sermon_pack_metrics "
+                "(session_id, artifact, generated_at, source_breakdown_json, mining_percentage) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (session_id, artifact, self._now(),
+                 json.dumps(source_breakdown), float(mining_percentage)),
+            )
+            return cur.lastrowid
+
+    def get_latest_sermon_pack_metrics(self, session_id):
+        """Return {artifact: {source_breakdown_json, mining_percentage, generated_at}}
+        using only the most recent row per artifact for this session."""
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT artifact, source_breakdown_json, mining_percentage, generated_at "
+            "FROM sermon_pack_metrics WHERE session_id = ? "
+            "ORDER BY generated_at DESC",
+            (session_id,),
+        ).fetchall()
+        conn.close()
+        out = {}
+        for r in rows:
+            if r['artifact'] not in out:
+                out[r['artifact']] = dict(r)
+        return out
 
     def create_session(self, passage_ref, book, chapter, verse_start, verse_end, genre):
         now = self._now()
