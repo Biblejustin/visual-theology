@@ -19,6 +19,7 @@ from study import (
     find_commentary_section, resolve_bible_files,
     get_resource_articles, read_article_text,
 )
+from logos_search import get_searcher
 
 # ── Lexicon/Grammar resource registry ──────────────────────────────────────
 # Resources confirmed readable, organized by use case.
@@ -892,32 +893,50 @@ def _search_lexicon(resource_file, abbrev, word, resource_type="lexicon"):
 
 
 def _lookup_grammar(tool_input, session_context):
-    """Search grammar resources by scanning article IDs for a query term."""
-    query = tool_input["query"]
-    requested_grammars = tool_input.get("grammars")
+    """Search Greek/Hebrew grammars by full text (not headword index), then
+    return the matching section's full text. The headword index missed
+    discursive sections like Wallace on the subjective/objective genitive."""
+    query = (tool_input.get("query") or "").strip()
+    if not query:
+        return {"error": "query is required"}
     testament = tool_input.get("testament", "nt")
+    requested = tool_input.get("grammars")
+    pool = ALL_GRAMMARS if requested else (NT_GRAMMARS if testament == "nt" else OT_GRAMMARS)
+    if requested:
+        pool = [g for g in ALL_GRAMMARS if g["abbrev"] in requested] or pool
+    grammar_files = {g["file"] for g in pool}
 
-    if requested_grammars:
-        grammars = [g for g in ALL_GRAMMARS if g["abbrev"] in requested_grammars]
-        if not grammars:
-            grammars = NT_GRAMMARS[:2] if testament == "nt" else OT_GRAMMARS[:1]
-    else:
-        grammars = NT_GRAMMARS[:3] if testament == "nt" else OT_GRAMMARS
+    try:
+        result = get_searcher().search(query, limit=15)
+    except Exception as e:
+        return {"error": f"grammar_search_failed: {type(e).__name__}: {e}", "query": query}
+    hits = (result or {}).get("results") or []
 
-    results = []
-    for gram in grammars:
-        entry = _search_lexicon(gram["file"], gram["abbrev"], query, resource_type="grammar")
-        if entry:
-            results.append(entry)
-        if len(results) >= 2:
+    entries = []
+    for h in hits:
+        if h.get("filename") not in grammar_files:
+            continue
+        sections = h.get("sections") or []
+        if not sections:
+            continue
+        art = sections[0].get("article_num")
+        if art is None:
+            continue
+        text = read_article_text(h["filename"], int(art), max_chars=6000)
+        if not text:
+            continue
+        entries.append({
+            "abbrev": h.get("abbrev") or "",
+            "title": h.get("title") or "",
+            "filename": h.get("filename"),
+            "article_num": int(art),
+            "text": text,
+        })
+        if len(entries) >= 2:
             break
 
-    return {
-        "query": query,
-        "testament": testament,
-        "entries": results,
-        "searched": [g["abbrev"] for g in grammars],
-    }
+    return {"query": query, "testament": testament, "entries": entries,
+            "searched": sorted(grammar_files)}
 
 
 def _word_study_lookup(tool_input, session_context):
