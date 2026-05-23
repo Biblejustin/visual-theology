@@ -46,3 +46,60 @@ def test_entity_adapter_picks_right_db_filename(monkeypatch):
     ad = adapter_for("entity")
     ad.query({"book": 66, "chapter": 3, "verse_start": 25}, _entity_ds("BiblicalPlaces.lbsplc"))
     assert captured['db_name'].lower() == "biblicalplaces.db"
+
+
+def test_xref_adapter_calls_reader_with_cross_references_db_and_real_sql(monkeypatch):
+    """Deeper-seam test: mock at the dataset_tools boundary so the REAL
+    _query_xref_for_passage body runs. Asserts the db_name and SQL shape
+    that reach the reader."""
+    import dataset_tools
+    captured = {}
+
+    class _FakeReader:
+        def query_dataset(self, filename, db_name, sql):
+            captured['filename'] = filename
+            captured['db_name'] = db_name
+            captured['sql'] = sql
+            return [{"to": "Hebrews 9:5", "topic": "mercy seat"}]
+
+    monkeypatch.setattr(dataset_tools, "_get_reader", lambda: _FakeReader(), raising=False)
+    out = adapter_for("xref").query(
+        {"book": 66, "chapter": 3, "verse_start": 25}, _xref_ds())
+    assert captured.get('filename') == "THEOLOGY-XREFS.lbsxrf"
+    assert captured.get('db_name') == "CrossReferences.db"
+    # Sanity: the SQL targets the CrossReferences table and uses a hex
+    # clause for the passage.
+    assert "CrossReferences" in (captured.get('sql') or "")
+    assert out["results"] == [{"to": "Hebrews 9:5", "topic": "mercy seat"}]
+
+
+def test_entity_adapter_returns_unsupported_envelope_for_events(monkeypatch):
+    """Regression for the Task 3 false-empty bug: entity extensions whose
+    inner schema doesn't match _query_entity_db (e.g. .lbsevt Events) must
+    NOT return 'no matches' silently — they must return the explicit 'no db
+    mapping' diagnostic so the agent + Bryan know we don't have an adapter
+    for that family yet."""
+    out = adapter_for("entity").query(
+        {"book": 66, "chapter": 3, "verse_start": 25},
+        _entity_ds("BiblicalEvents.lbsevt"))
+    assert out["results"] == []
+    note = (out.get("note") or "").lower()
+    assert "no db mapping" in note, f"expected 'no db mapping' diagnostic, got: {out.get('note')!r}"
+
+
+def test_entity_adapter_calls_helper_with_resolved_db_name(monkeypatch):
+    """Deeper-seam test: mock at the dataset_tools boundary so the REAL
+    EntityAdapter.query body runs and we can assert _query_entity_db is
+    called with the resolved db_name."""
+    import dataset_tools
+    captured = {}
+    def fake(filename, db_name, book, chapter):
+        captured['filename'] = filename
+        captured['db_name'] = db_name
+        return [{"entity": "Cherubim"}]
+    monkeypatch.setattr(dataset_tools, "_query_entity_db", fake, raising=False)
+    out = adapter_for("entity").query(
+        {"book": 66, "chapter": 3, "verse_start": 25}, _entity_ds("BiblicalPeople.lbsbpd"))
+    assert captured.get('filename') == "BiblicalPeople.lbsbpd"
+    assert captured.get('db_name') == "biblicalpeople.db"
+    assert out["results"] == [{"entity": "Cherubim"}]

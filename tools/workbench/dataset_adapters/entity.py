@@ -16,15 +16,18 @@ logger = logging.getLogger(__name__)
 
 
 # Map known entity extensions to their canonical inner DB name.
+# Only the 3 extensions whose inner schema matches the JOIN in
+# dataset_tools._query_entity_db are wired here. The other 5 entity
+# extensions (.lbsevt .lbsbrd .lbsbio .lbsmps .lbsspd) have different
+# inner schemas; their adapters belong in B-2+ work — until then,
+# adapter_for("entity") returns the standard "no db mapping" envelope
+# for those, which is honest (we don't have an adapter), rather than
+# the misleading "no matches at this passage" the broad except would
+# otherwise produce.
 _DB_NAME_BY_EXT = {
     ".lbsbpd": "biblicalpeople.db",
     ".lbsplc": "biblicalplaces.db",
     ".lbsthg": "biblicalthings.db",
-    ".lbsevt": "biblicalevents.db",
-    ".lbsbrd": "biblicalreferents.db",
-    ".lbsbio": "biographies.db",
-    ".lbsmps": "biblicalplacesmaps.db",
-    ".lbsspd": "staticpeoplegraphs.db",
 }
 
 
