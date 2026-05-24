@@ -12,6 +12,7 @@ def _load_sermon_pack():
     path = Path(__file__).parent.parent.parent / 'sermon_pack.py'
     spec = importlib.util.spec_from_file_location('sermon_pack', path)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # required so dataclasses can resolve PEP-563 annotations
     spec.loader.exec_module(mod)
     return mod
 

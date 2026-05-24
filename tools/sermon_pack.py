@@ -15,6 +15,8 @@ is recorded to sermon_pack_metrics. Driving mining-% to zero is the
 acceptance metric for the follow-on upstream-wiring spec.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import re
