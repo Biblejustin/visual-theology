@@ -144,3 +144,37 @@ def load_card_responses(db_path: str, session_id: int) -> dict[str, list[str]]:
     for r in rows:
         out.setdefault(r['phase'], []).append(r['content'])
     return out
+
+
+_MIN_HEADINGS_FOR_OUTLINE = 3
+
+
+def mine_outline_message(db_path: str, session_id: int) -> str | None:
+    """Return the assistant message most likely to contain a full sermon outline.
+
+    Heuristic: an assistant message in any phase that contains at least
+    `_MIN_HEADINGS_FOR_OUTLINE` markdown headings (lines starting with `## `
+    or higher). Among qualifying messages, pick the longest. Ties broken by
+    higher message id (most recent), so the result is fully deterministic
+    given the database state."""
+    conn = _open_db(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, content FROM conversation_messages "
+            "WHERE session_id = ? AND role = 'assistant' AND content IS NOT NULL "
+            "ORDER BY id",
+            (session_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    best = None
+    best_key = (-1, -1)  # (length, id)
+    for r in rows:
+        c = r['content']
+        if len(re.findall(r'(?m)^#{2,6}\s', c)) < _MIN_HEADINGS_FOR_OUTLINE:
+            continue
+        key = (len(c), r['id'])
+        if key > best_key:
+            best_key = key
+            best = c
+    return best

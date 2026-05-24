@@ -169,3 +169,52 @@ def test_load_card_responses_flattens_to_phase_keyed_lists():
         'I notice the word propitiation.',
         'Verb tenses shift in v.26.',
     ]
+
+
+def _insert_msg(path, sid, role, content, phase='study'):
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO conversation_messages "
+        "(session_id, phase, role, content, created_at) "
+        "VALUES (?, ?, ?, ?, datetime('now'))",
+        (sid, phase, role, content),
+    )
+    conn.commit(); conn.close()
+
+
+def test_mine_largest_outline_message_picks_richest_assistant_turn():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    _insert_msg(path, sid, 'user', 'short user note')
+    _insert_msg(path, sid, 'assistant',
+                'Brief acknowledgement, no headings here.')
+    big = ('# Sermon outline\n\n## INTRODUCTION\n\nOpening prose.\n\n'
+           '## POINT 1: God displayed Jesus\n\nBody text body text.\n\n'
+           '## POINT 2: God proved His righteousness\n\nMore body.\n\n'
+           '## CONCLUSION\n\nClosing prose.')
+    _insert_msg(path, sid, 'assistant', big)
+    _insert_msg(path, sid, 'assistant', 'Quick follow-up, no structure.')
+    sp = _load_sermon_pack()
+    chosen = sp.mine_outline_message(path, sid)
+    assert chosen is not None
+    assert chosen.startswith('# Sermon outline')
+
+
+def test_mine_outline_message_returns_none_when_no_qualifying_message():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    _insert_msg(path, sid, 'assistant', 'No markdown headings here at all.')
+    _insert_msg(path, sid, 'user', '## a heading from a user does not count')
+    sp = _load_sermon_pack()
+    assert sp.mine_outline_message(path, sid) is None
+
+
+def test_mine_is_deterministic_across_calls():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    a = '# A\n\n## Heading 1\n## Heading 2\n## Heading 3\n\nBody.'
+    b = '# B\n\n## Heading 1\n## Heading 2\n## Heading 3\n\nBody.'
+    _insert_msg(path, sid, 'assistant', a)
+    _insert_msg(path, sid, 'assistant', b)
+    sp = _load_sermon_pack()
+    assert sp.mine_outline_message(path, sid) == sp.mine_outline_message(path, sid)
