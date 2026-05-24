@@ -7,6 +7,8 @@ Uses Flask's test client — does NOT start the actual server.
 import os
 import sys
 import tempfile
+import zipfile
+from io import BytesIO
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -93,6 +95,29 @@ def test_study_session_view(client):
     r = client.get(f'/study/session/{session_id}')
     assert r.status_code == 200
     assert b'Romans 1:18-23' in r.data
+    assert b'/outline/export.pdf' in r.data
+    assert b'/outline/export.docx' in r.data
+
+
+def test_study_session_view_has_sermon_pack_block(client):
+    session_id, _ = _make_study_session(client)
+    r = client.get(f'/study/session/{session_id}')
+    assert r.status_code == 200
+    # Two clearly-labeled groups
+    assert b'SERMON PACK' in r.data
+    assert b'OUTLINE TREE ONLY' in r.data
+    # Six pack download links
+    assert b'/pack/manuscript.md' in r.data
+    assert b'/pack/manuscript.md?format=html' in r.data
+    assert b'/pack/outline.md' in r.data
+    assert b'/pack/outline.md?format=html' in r.data
+    assert b'/pack/handout.md' in r.data
+    assert b'/pack/handout.md?format=html' in r.data
+    # Existing outline-tree-only links still present (relabeled)
+    assert b'/outline/export.pdf' in r.data
+    assert b'/outline/export.docx' in r.data
+    # Pill placeholder
+    assert b'sermon-pack-pill' in r.data
 
 
 def test_study_session_not_found(client):
@@ -193,6 +218,53 @@ def test_study_outline_delete(client):
     assert r.get_json() == []
 
 
+def test_study_outline_export_docx_contains_outline_and_is_read_only(client):
+    import app as app_module
+    session_id, _ = _make_study_session(client)
+    root_id = app_module.companion_db.add_outline_node(
+        session_id, 'main_point', 'I. God reveals his righteousness')
+    app_module.companion_db.add_outline_node(
+        session_id, 'sub_point', 'Through faith in Jesus Christ',
+        parent_id=root_id, verse_ref='Rom 3:22')
+    before = app_module.companion_db.get_outline_tree(session_id)
+
+    r = client.get(f'/study/session/{session_id}/outline/export.docx')
+
+    assert r.status_code == 200
+    assert r.content_type.startswith(
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    assert 'preaching-outline-romans-1-18-23.docx' in r.headers['Content-Disposition']
+    with zipfile.ZipFile(BytesIO(r.data)) as zf:
+        document_xml = zf.read('word/document.xml').decode('utf-8')
+    assert 'Preaching Outline - Romans 1:18-23' in document_xml
+    assert 'I. God reveals his righteousness' in document_xml
+    assert 'Through faith in Jesus Christ (Rom 3:22)' in document_xml
+    assert app_module.companion_db.get_outline_tree(session_id) == before
+
+
+def test_study_outline_export_pdf_contains_outline_and_is_read_only(client):
+    import app as app_module
+    session_id, _ = _make_study_session(client)
+    app_module.companion_db.add_outline_node(
+        session_id, 'main_point', 'The justifier of the one who has faith')
+    before = app_module.companion_db.get_outline_tree(session_id)
+
+    r = client.get(f'/study/session/{session_id}/outline/export.pdf')
+
+    assert r.status_code == 200
+    assert r.content_type.startswith('application/pdf')
+    assert r.data.startswith(b'%PDF-1.4')
+    assert b'Preaching Outline - Romans 1:18-23' in r.data
+    assert b'The justifier of the one who has faith' in r.data
+    assert 'preaching-outline-romans-1-18-23.pdf' in r.headers['Content-Disposition']
+    assert app_module.companion_db.get_outline_tree(session_id) == before
+
+
+def test_study_outline_export_missing_session_404(client):
+    r = client.get('/study/session/999999/outline/export.docx')
+    assert r.status_code == 404
+
+
 # ── Clock ────────────────────────────────────────────────────────────────
 
 def test_study_clock_update(client):
@@ -268,5 +340,4 @@ def test_study_notepad_save(client):
     resp = client.post(f"/study/session/{sid}/notepad",
                        json={"phase": "study_bibles", "content": "My observations"})
     assert resp.status_code == 200
-
 

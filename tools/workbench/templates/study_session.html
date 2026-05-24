@@ -135,6 +135,37 @@
                     <input type="text" class="sidebar-title" id="outline-title"
                            value="{{ session.passage_ref }}"
                            placeholder="Sermon title...">
+                    <div class="sermon-pack-actions" aria-label="Sermon-pack deliverables">
+                        <div class="pack-group">
+                            <div class="pack-group-label">SERMON PACK</div>
+                            <div class="pack-row">
+                                <span class="pack-row-label">Manuscript</span>
+                                <a href="/study/session/{{ session.id }}/pack/manuscript.md" class="outline-export-link">.md</a>
+                                <a href="/study/session/{{ session.id }}/pack/manuscript.md?format=html" class="outline-export-link">.html</a>
+                            </div>
+                            <div class="pack-row">
+                                <span class="pack-row-label">Outline</span>
+                                <a href="/study/session/{{ session.id }}/pack/outline.md" class="outline-export-link">.md</a>
+                                <a href="/study/session/{{ session.id }}/pack/outline.md?format=html" class="outline-export-link">.html</a>
+                            </div>
+                            <div class="pack-row">
+                                <span class="pack-row-label">Handout</span>
+                                <a href="/study/session/{{ session.id }}/pack/handout.md" class="outline-export-link">.md</a>
+                                <a href="/study/session/{{ session.id }}/pack/handout.md?format=html" class="outline-export-link">.html</a>
+                            </div>
+                            <div id="sermon-pack-pill" class="sermon-pack-pill" title="Source breakdown of last build">
+                                <span class="pill-label">Source breakdown</span>
+                                <span class="pill-value" data-empty>not yet built</span>
+                            </div>
+                        </div>
+                        <div class="pack-group">
+                            <div class="pack-group-label">OUTLINE TREE ONLY</div>
+                            <div class="outline-export-actions" aria-label="Export preaching outline">
+                                <a href="/study/session/{{ session.id }}/outline/export.pdf" class="outline-export-link">PDF</a>
+                                <a href="/study/session/{{ session.id }}/outline/export.docx" class="outline-export-link">Word</a>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div class="sidebar-body" id="outline-tree-container">
                 </div>
