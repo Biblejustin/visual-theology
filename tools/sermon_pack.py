@@ -218,3 +218,143 @@ def parse_mined_outline(md: str) -> dict:
         'points': points,
         'conclusion': '\n\n'.join(p for p in conclusion_parts if p),
     }
+
+
+# Decision-key to field-name mapping used by all three artifacts.
+_DECISION_TO_FIELD = {
+    'subject': 'subject',
+    'theme': 'theme',
+    'ep_otm': 'exegetical_point',
+    'transition': 'transition',
+    'exegetical_outline': 'exegetical_outline',
+    'fcf': 'fcf',
+    'hp_tht': 'take_home_truth',
+    'purpose_statement': 'purpose_statement',
+    'target_length_min': 'target_length_min',
+}
+
+_ARTIFACT_FIELDS = {
+    'manuscript': (
+        'subject', 'take_home_truth', 'target_length_min', 'passage_ref',
+        'preach_date', 'intro', 'points', 'conclusion',
+    ),
+    'outline': (
+        'subject', 'take_home_truth', 'target_length_min', 'passage_ref',
+        'preach_date', 'intro', 'points', 'conclusion',
+    ),
+    'handout': (
+        'subject', 'take_home_truth', 'passage_ref', 'preach_date',
+        'points', 'conclusion',
+    ),
+}
+
+
+def _field_from_decisions(decisions: dict, field_name: str) -> FieldResult | None:
+    for dec_key, mapped in _DECISION_TO_FIELD.items():
+        if mapped == field_name and dec_key in decisions:
+            return FieldResult(value=decisions[dec_key], source='decisions')
+    return None
+
+
+def _field_from_session(session_row: dict, field_name: str) -> FieldResult | None:
+    if field_name == 'passage_ref' and session_row.get('passage_ref'):
+        return FieldResult(value=session_row['passage_ref'], source='decisions')
+    if field_name == 'preach_date' and session_row.get('preach_date'):
+        return FieldResult(value=session_row['preach_date'], source='decisions')
+    return None
+
+
+def resolve_artifact_fields(db_path: str, session_id: int, *,
+                            artifact: str) -> dict[str, FieldResult]:
+    """Resolve every field for the named artifact, returning {name: FieldResult}."""
+    if artifact not in _ARTIFACT_FIELDS:
+        raise ValueError(f'unknown artifact: {artifact!r}')
+
+    session_row = load_session_row(db_path, session_id) or {}
+    decisions = load_decisions(db_path, session_id)
+    outline_points = load_outline_points(db_path, session_id)
+    mined = mine_outline_message(db_path, session_id)
+    parsed = parse_mined_outline(mined) if mined else {'intro': '', 'points': [], 'conclusion': ''}
+
+    ctx: dict[str, FieldResult] = {}
+    for name in _ARTIFACT_FIELDS[artifact]:
+        # Session-column fields (passage_ref, preach_date) are tagged 'decisions'
+        # in the source taxonomy because they are committed structured fields,
+        # not mined text.
+        sess = _field_from_session(session_row, name)
+        if sess:
+            ctx[name] = sess
+            continue
+        dec = _field_from_decisions(decisions, name)
+        if dec:
+            ctx[name] = dec
+            continue
+        if name == 'points':
+            if outline_points:
+                ctx[name] = FieldResult(value=_format_points(outline_points), source='outline')
+            elif parsed['points']:
+                ctx[name] = FieldResult(value=_format_mined_points(parsed['points']),
+                                         source='mined')
+            else:
+                ctx[name] = missing_field(name)
+            continue
+        if name == 'intro':
+            if parsed['intro']:
+                ctx[name] = FieldResult(value=parsed['intro'], source='mined')
+            else:
+                ctx[name] = missing_field(name)
+            continue
+        if name == 'conclusion':
+            if parsed['conclusion']:
+                ctx[name] = FieldResult(value=parsed['conclusion'], source='mined')
+            else:
+                ctx[name] = missing_field(name)
+            continue
+        ctx[name] = missing_field(name)
+    return ctx
+
+
+def _format_points(points: list[dict]) -> str:
+    """Format outline_nodes points as a manuscript/outline body string."""
+    parts = []
+    for i, p in enumerate(points, start=1):
+        title = p['title']
+        ref = f' ({p["verse_ref"]})' if p.get('verse_ref') else ''
+        parts.append(f'## POINT {i}: {title}{ref}')
+        for s in p.get('subs', []):
+            sub_ref = f' ({s["verse_ref"]})' if s.get('verse_ref') else ''
+            parts.append(f'* {s["content"]}{sub_ref}')
+        for x in p.get('cross_refs', []):
+            ref = x.get('verse_ref') or x.get('content', '')
+            parts.append(f'* **Scripture:** {ref}')
+        for n in p.get('notes', []):
+            parts.append(f'* {n["content"]}')
+        for il in p.get('illustrations', []):
+            parts.append(f'> {il["content"]}')
+        parts.append('')
+    return '\n'.join(parts).rstrip()
+
+
+def _format_mined_points(points: list[dict]) -> str:
+    parts = []
+    for p in points:
+        parts.append(f'## {p["title"]}')
+        parts.append('')
+        parts.append(p['body'])
+        parts.append('')
+    return '\n'.join(parts).rstrip()
+
+
+def compute_source_breakdown(ctx: dict[str, FieldResult]) -> dict[str, int]:
+    br = {s: 0 for s in SOURCES}
+    for fr in ctx.values():
+        br[fr.source] = br.get(fr.source, 0) + 1
+    return br
+
+
+def compute_mining_percentage(breakdown: dict[str, int]) -> float:
+    """Mined divided by non-missing total. Returns 0.0 if no fields resolved at all."""
+    denom = sum(v for k, v in breakdown.items() if k != 'missing')
+    if denom == 0:
+        return 0.0
+    return round(breakdown.get('mined', 0) / denom, 4)

@@ -251,3 +251,59 @@ def test_parse_mined_outline_missing_sections_return_empty_string():
     assert parsed['intro'] == ''
     assert parsed['points'] == []
     assert parsed['conclusion'] == ''
+
+
+def test_resolve_artifact_fields_uses_decision_when_present():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    _seed_decisions(path, sid, {
+        'subject': 'God is righteous.',
+        'hp_tht': 'Your God has proven His righteousness.',
+        'target_length_min': '28',
+    })
+    sp = _load_sermon_pack()
+    ctx = sp.resolve_artifact_fields(path, sid, artifact='manuscript')
+    assert ctx['subject'].value == 'God is righteous.'
+    assert ctx['subject'].source == 'decisions'
+    assert ctx['take_home_truth'].value.startswith('Your God')
+    assert ctx['target_length_min'].value == '28'
+
+
+def test_resolve_artifact_falls_back_to_mined_for_intro_when_no_structured():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    big = ('# Sermon\n\n## INTRODUCTION\n\nMined intro paragraph.\n\n'
+           '## POINT 1: A\n\nBody.\n\n## POINT 2: B\n\nBody.\n\n'
+           '## CONCLUSION\n\nMined conclusion.')
+    _insert_msg(path, sid, 'assistant', big)
+    sp = _load_sermon_pack()
+    ctx = sp.resolve_artifact_fields(path, sid, artifact='manuscript')
+    assert 'Mined intro paragraph.' in ctx['intro'].value
+    assert ctx['intro'].source == 'mined'
+    assert ctx['points'].source == 'mined'
+    assert ctx['conclusion'].source == 'mined'
+
+
+def test_resolve_artifact_marks_missing_fields_with_marker():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    sp = _load_sermon_pack()
+    ctx = sp.resolve_artifact_fields(path, sid, artifact='manuscript')
+    assert ctx['subject'].value == '[missing: subject]'
+    assert ctx['subject'].source == 'missing'
+    assert ctx['intro'].source == 'missing'
+
+
+def test_compute_source_breakdown_and_mining_pct():
+    sp = _load_sermon_pack()
+    ctx = {
+        'subject': sp.FieldResult('S', 'decisions'),
+        'take_home_truth': sp.FieldResult('T', 'decisions'),
+        'intro': sp.FieldResult('I', 'mined'),
+        'points': sp.FieldResult('P', 'outline'),
+        'conclusion': sp.FieldResult('[missing: conclusion]', 'missing'),
+    }
+    br = sp.compute_source_breakdown(ctx)
+    assert br == {'decisions': 2, 'outline': 1, 'mined': 1, 'missing': 1,
+                  'notepad': 0, 'card': 0}
+    assert sp.compute_mining_percentage(br) == 0.25  # 1 mined / 4 non-missing
