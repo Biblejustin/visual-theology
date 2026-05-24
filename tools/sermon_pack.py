@@ -373,3 +373,66 @@ def render(artifact: str, ctx: dict[str, FieldResult]) -> str:
     tmpl = _load_template(artifact)
     values = {k: v.value for k, v in ctx.items()}
     return tmpl.format(**values)
+
+
+class SermonPackError(RuntimeError):
+    """Raised when generation cannot proceed (e.g. session id is unknown)."""
+
+
+def _safe_filename(passage: str, artifact: str) -> str:
+    """Mirror the existing _safe_export_filename convention from app.py."""
+    slug = re.sub(r'[^A-Za-z0-9]+', '-', passage).strip('-').lower() or 'sermon'
+    suffix = {
+        'manuscript': 'manuscript',
+        'outline': 'preaching-outline',
+        'handout': 'congregation-handout',
+    }[artifact]
+    return f'{slug}-{suffix}.md'
+
+
+def generate(session_id: int, *, db_path: str, out_dir: str | Path,
+             artifacts: tuple[str, ...] = ('manuscript', 'outline', 'handout'),
+             companion_db=None) -> dict:
+    """Generate the requested artifacts and write each as a .md file.
+
+    Returns {artifact: {path, content, mining_percentage, source_breakdown}}.
+    Logs one sermon_pack_metrics row per artifact when `companion_db` is
+    supplied (the Flask routes pass app.companion_db; the CLI builds one
+    from db_path)."""
+    session_row = load_session_row(db_path, session_id)
+    if session_row is None:
+        raise SermonPackError(f'session {session_id} not found in {db_path}')
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    passage = session_row.get('passage_ref') or f'session-{session_id}'
+
+    # Build companion_db handle for metrics logging if caller did not pass one.
+    if companion_db is None:
+        try:
+            sys.path.insert(0, str(Path(__file__).parent / 'workbench'))
+            from companion_db import CompanionDB  # noqa: E402
+            companion_db = CompanionDB(db_path)
+        except ImportError:
+            companion_db = None  # tests with no workbench package still work
+
+    result: dict[str, dict] = {}
+    for art in artifacts:
+        ctx = resolve_artifact_fields(db_path, session_id, artifact=art)
+        content = render(art, ctx)
+        breakdown = compute_source_breakdown(ctx)
+        mining_pct = compute_mining_percentage(breakdown)
+        path = out_dir / _safe_filename(passage, art)
+        path.write_text(content, encoding='utf-8')
+        if companion_db is not None:
+            companion_db.save_sermon_pack_metric(
+                session_id=session_id, artifact=art,
+                source_breakdown=breakdown,
+                mining_percentage=mining_pct,
+            )
+        result[art] = {
+            'path': str(path),
+            'content': content,
+            'mining_percentage': mining_pct,
+            'source_breakdown': breakdown,
+        }
+    return result

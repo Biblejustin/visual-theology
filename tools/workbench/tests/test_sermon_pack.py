@@ -449,3 +449,70 @@ def test_handout_template_filename_triggers_tight_print_profile():
     _sys.path.insert(0, str(_Path(__file__).parent.parent.parent))
     from md_to_html import _pick_css, _HANDOUT_CSS
     assert _pick_css('romans-3-25-26-congregation-handout') == _HANDOUT_CSS
+
+
+def test_generate_writes_three_files_and_logs_metrics():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    _seed_decisions(path, sid, {
+        'subject': 'God is righteous.',
+        'hp_tht': 'THT here.',
+        'target_length_min': '28',
+    })
+    _insert_msg(path, sid, 'assistant',
+                '# X\n\n## INTRODUCTION\n\nIntro.\n\n'
+                '## POINT 1: A\n\nBody.\n\n## POINT 2: B\n\nBody.\n\n'
+                '## CONCLUSION\n\nEnd.')
+    sp = _load_sermon_pack()
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        result = sp.generate(sid, db_path=path, out_dir=td)
+        assert set(result) == {'manuscript', 'outline', 'handout'}
+        for artifact in result:
+            p = Path(result[artifact]['path'])
+            assert p.exists()
+            assert p.read_text(encoding='utf-8') == result[artifact]['content']
+            # no em-dashes
+            assert '—' not in result[artifact]['content']
+            assert isinstance(result[artifact]['mining_percentage'], float)
+            assert isinstance(result[artifact]['source_breakdown'], dict)
+    # metrics row was logged
+    metrics = cdb.get_latest_sermon_pack_metrics(sid)
+    assert set(metrics) == {'manuscript', 'outline', 'handout'}
+
+
+def test_generate_is_byte_identical_on_consecutive_runs():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    _seed_decisions(path, sid, {'subject': 'X', 'hp_tht': 'Y',
+                                'target_length_min': '28'})
+    sp = _load_sermon_pack()
+    import tempfile
+    with tempfile.TemporaryDirectory() as td1, tempfile.TemporaryDirectory() as td2:
+        a = sp.generate(sid, db_path=path, out_dir=td1)
+        b = sp.generate(sid, db_path=path, out_dir=td2)
+        for art in ('manuscript', 'outline', 'handout'):
+            assert a[art]['content'] == b[art]['content']
+
+
+def test_generate_subset_of_artifacts():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    sp = _load_sermon_pack()
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        result = sp.generate(sid, db_path=path, out_dir=td, artifacts=('handout',))
+        assert set(result) == {'handout'}
+
+
+def test_generate_raises_for_missing_session():
+    cdb, path = _fresh_db()
+    sp = _load_sermon_pack()
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            sp.generate(99999, db_path=path, out_dir=td)
+        except sp.SermonPackError as e:
+            assert '99999' in str(e)
+        else:
+            assert False, 'expected SermonPackError'
