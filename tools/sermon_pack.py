@@ -436,3 +436,60 @@ def generate(session_id: int, *, db_path: str, out_dir: str | Path,
             'source_breakdown': breakdown,
         }
     return result
+
+
+def _print_report(db_path: str) -> int:
+    conn = _open_db(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT session_id, artifact, mining_percentage, generated_at "
+            "FROM sermon_pack_metrics ORDER BY generated_at DESC LIMIT 50"
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        print('no sermon_pack_metrics rows yet')
+        return 0
+    print(f'{"session":>7}  {"artifact":<11}  {"mining%":>7}  generated_at')
+    for r in rows:
+        print(f'{r["session_id"]:>7}  {r["artifact"]:<11}  '
+              f'{r["mining_percentage"]:>6.3f}  {r["generated_at"]}')
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        description='Generate sermon-pack deliverables from a finished study session.',
+    )
+    p.add_argument('session_id', nargs='?', type=int,
+                   help='session id (omit when using --report)')
+    p.add_argument('--db', default=None,
+                   help='path to companion.db (defaults to tools/workbench/companion.db)')
+    p.add_argument('--out', default='.',
+                   help='output directory for generated .md files')
+    p.add_argument('--artifact', action='append',
+                   choices=('manuscript', 'outline', 'handout'),
+                   help='emit only the named artifact (repeatable). Default: all three.')
+    p.add_argument('--report', action='store_true',
+                   help='print recent sermon_pack_metrics rows and exit')
+    args = p.parse_args(argv)
+
+    db_path = args.db or str(Path(__file__).parent / 'workbench' / 'companion.db')
+
+    if args.report:
+        return _print_report(db_path)
+
+    if args.session_id is None:
+        p.error('session_id is required unless --report is given')
+
+    artifacts = tuple(args.artifact) if args.artifact else ('manuscript', 'outline', 'handout')
+    result = generate(args.session_id, db_path=db_path, out_dir=args.out,
+                      artifacts=artifacts)
+    for art, info in result.items():
+        print(f'{art}: {info["path"]}  mining={info["mining_percentage"]:.3f}  '
+              f'breakdown={info["source_breakdown"]}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

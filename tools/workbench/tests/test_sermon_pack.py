@@ -516,3 +516,34 @@ def test_generate_raises_for_missing_session():
             assert '99999' in str(e)
         else:
             assert False, 'expected SermonPackError'
+
+
+def test_cli_generates_artifacts_to_out_dir(tmp_path):
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    _seed_decisions(path, sid, {'subject': 'S', 'hp_tht': 'T',
+                                'target_length_min': '28'})
+    sp = _load_sermon_pack()
+    rc = sp.main([str(sid), '--db', path, '--out', str(tmp_path)])
+    assert rc == 0
+    md_files = sorted(p.name for p in tmp_path.glob('*.md'))
+    assert any('manuscript' in n for n in md_files)
+    assert any('preaching-outline' in n for n in md_files)
+    assert any('congregation-handout' in n for n in md_files)
+
+
+def test_cli_report_prints_recent_mining_percentages(capsys):
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    cdb.save_sermon_pack_metric(
+        session_id=sid, artifact='manuscript',
+        source_breakdown={'decisions': 2, 'mined': 1},
+        mining_percentage=0.333,
+    )
+    sp = _load_sermon_pack()
+    rc = sp.main(['--report', '--db', path])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert str(sid) in out
+    assert 'manuscript' in out
+    assert '0.333' in out or '33.3' in out
