@@ -1,5 +1,6 @@
 import os, sys, tempfile, json, sqlite3
 import importlib.util
+import re as _re
 from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -307,3 +308,65 @@ def test_compute_source_breakdown_and_mining_pct():
     assert br == {'decisions': 2, 'outline': 1, 'mined': 1, 'missing': 1,
                   'notepad': 0, 'card': 0}
     assert sp.compute_mining_percentage(br) == 0.25  # 1 mined / 4 non-missing
+
+
+def _assert_no_em_dash_and_no_stray_double_hyphen(out: str) -> None:
+    """The no-em-dash rule applies everywhere; the no-double-hyphen rule
+    targets the AI-typography tell, not standard markdown horizontal rules.
+    A markdown HR is a line of only hyphens and whitespace; anywhere else
+    a `--` would be a substitute we want to catch."""
+    assert '—' not in out
+    for line in out.splitlines():
+        if _re.fullmatch(r'-{3,}\s*', line):
+            continue
+        assert '--' not in line, f'unexpected double-hyphen in: {line!r}'
+
+
+def test_render_manuscript_substitutes_fields_and_contains_no_em_dash():
+    sp = _load_sermon_pack()
+    ctx = {
+        'subject': sp.FieldResult('God is righteous.', 'decisions'),
+        'take_home_truth': sp.FieldResult('Your God has proven His righteousness.',
+                                          'decisions'),
+        'target_length_min': sp.FieldResult('28', 'decisions'),
+        'passage_ref': sp.FieldResult('Romans 3:25-26', 'decisions'),
+        'preach_date': sp.FieldResult('2026-05-24', 'decisions'),
+        'intro': sp.FieldResult('Opening prose paragraph.', 'mined'),
+        'points': sp.FieldResult('## POINT 1: A\n\nBody one.', 'mined'),
+        'conclusion': sp.FieldResult('Closing prose.', 'mined'),
+    }
+    out = sp.render('manuscript', ctx)
+    assert 'Romans 3:25-26' in out
+    assert 'Your God has proven His righteousness.' in out
+    assert 'Opening prose paragraph.' in out
+    assert '## POINT 1: A' in out
+    _assert_no_em_dash_and_no_stray_double_hyphen(out)
+
+
+def test_render_manuscript_with_missing_fields_emits_markers():
+    sp = _load_sermon_pack()
+    ctx = {k: sp.missing_field(k) for k in
+           ('subject', 'take_home_truth', 'target_length_min', 'passage_ref',
+            'preach_date', 'intro', 'points', 'conclusion')}
+    out = sp.render('manuscript', ctx)
+    assert '[missing: subject]' in out
+    assert '[missing: take_home_truth]' in out
+    assert '[missing: intro]' in out
+    _assert_no_em_dash_and_no_stray_double_hyphen(out)
+
+
+def test_render_manuscript_is_deterministic_byte_identical():
+    sp = _load_sermon_pack()
+    ctx = {
+        'subject': sp.FieldResult('S', 'decisions'),
+        'take_home_truth': sp.FieldResult('T', 'decisions'),
+        'target_length_min': sp.FieldResult('28', 'decisions'),
+        'passage_ref': sp.FieldResult('Rom 3:25-26', 'decisions'),
+        'preach_date': sp.FieldResult('2026-05-24', 'decisions'),
+        'intro': sp.FieldResult('I', 'mined'),
+        'points': sp.FieldResult('## POINT 1\n\nbody', 'mined'),
+        'conclusion': sp.FieldResult('C', 'mined'),
+    }
+    a = sp.render('manuscript', ctx)
+    b = sp.render('manuscript', ctx)
+    assert a == b

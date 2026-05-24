@@ -358,3 +358,18 @@ def compute_mining_percentage(breakdown: dict[str, int]) -> float:
     if denom == 0:
         return 0.0
     return round(breakdown.get('mined', 0) / denom, 4)
+
+
+_TEMPLATE_DIR = Path(__file__).parent / 'sermon_pack_templates'
+
+
+def _load_template(artifact: str) -> str:
+    path = _TEMPLATE_DIR / f'{artifact}.md.tmpl'
+    return path.read_text(encoding='utf-8')
+
+
+def render(artifact: str, ctx: dict[str, FieldResult]) -> str:
+    """Render a markdown artifact from resolved fields."""
+    tmpl = _load_template(artifact)
+    values = {k: v.value for k, v in ctx.items()}
+    return tmpl.format(**values)
