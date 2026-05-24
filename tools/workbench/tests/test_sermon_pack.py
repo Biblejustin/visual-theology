@@ -370,3 +370,41 @@ def test_render_manuscript_is_deterministic_byte_identical():
     a = sp.render('manuscript', ctx)
     b = sp.render('manuscript', ctx)
     assert a == b
+
+
+def test_render_outline_uses_bullet_style_and_no_em_dash():
+    sp = _load_sermon_pack()
+    ctx = {
+        'subject': sp.FieldResult('God is righteous.', 'decisions'),
+        'take_home_truth': sp.FieldResult('THT here.', 'decisions'),
+        'target_length_min': sp.FieldResult('28', 'decisions'),
+        'passage_ref': sp.FieldResult('Romans 3:25-26', 'decisions'),
+        'preach_date': sp.FieldResult('2026-05-24', 'decisions'),
+        'intro': sp.FieldResult('FCF question. Bridge. THT.', 'mined'),
+        'points': sp.FieldResult('## POINT 1: A\n* sub one\n* sub two', 'outline'),
+        'conclusion': sp.FieldResult('EP recap. THT. Silence.', 'mined'),
+    }
+    out = sp.render('outline', ctx)
+    assert 'Preaching Outline' in out
+    assert 'God is righteous.' in out
+    assert '## POINT 1: A' in out
+    assert '* sub one' in out
+    _assert_no_em_dash_and_no_stray_double_hyphen(out)  # reuse the helper from Task 9
+
+
+def test_render_outline_with_missing_target_length_emits_marker():
+    sp = _load_sermon_pack()
+    ctx = {
+        'subject': sp.FieldResult('S', 'decisions'),
+        'take_home_truth': sp.FieldResult('T', 'decisions'),
+        'target_length_min': sp.missing_field('target_length_min'),
+        'passage_ref': sp.FieldResult('Rom 3:25-26', 'decisions'),
+        'preach_date': sp.FieldResult('', 'decisions'),
+        'intro': sp.missing_field('intro'),
+        'points': sp.missing_field('points'),
+        'conclusion': sp.missing_field('conclusion'),
+    }
+    out = sp.render('outline', ctx)
+    assert '[missing: target_length_min]' in out
+    assert '[missing: intro]' in out
+    _assert_no_em_dash_and_no_stray_double_hyphen(out)
