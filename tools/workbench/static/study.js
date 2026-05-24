@@ -1194,10 +1194,11 @@ Object.assign(window, {
 // generations have happened yet, the pill shows "not yet built".
 (function () {
     const pill = document.getElementById('sermon-pack-pill');
-    if (!pill || !window.studySessionId) return;
+    if (!pill) return;
     const valueEl = pill.querySelector('.pill-value');
 
     async function refresh() {
+        if (!window.studySessionId) return;
         try {
             const r = await fetch('/study/session/' + window.studySessionId + '/pack/metrics');
             if (!r.ok) return;
@@ -1232,6 +1233,10 @@ Object.assign(window, {
         }
     }
 
-    refresh();
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', refresh);
+    } else {
+        refresh();
+    }
     document.addEventListener('sermon-pack-generated', refresh);
 })();
