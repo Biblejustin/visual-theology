@@ -408,3 +408,44 @@ def test_render_outline_with_missing_target_length_emits_marker():
     assert '[missing: target_length_min]' in out
     assert '[missing: intro]' in out
     _assert_no_em_dash_and_no_stray_double_hyphen(out)
+
+
+def test_render_handout_inserts_fill_in_blanks_and_page_break():
+    sp = _load_sermon_pack()
+    points_md = ('## Point 1: God ________ Jesus as your ________ ________\n'
+                 '* The tabernacle was a royal throne room.\n'
+                 '\n'
+                 '## Point 2: God ________ His righteousness in dealing with ________ ________\n'
+                 '* God dealt with their sins by His forbearance.')
+    ctx = {
+        'subject': sp.FieldResult('God\'s Righteousness, Proven', 'decisions'),
+        'take_home_truth': sp.FieldResult('Your God has proven His righteousness.',
+                                          'decisions'),
+        'passage_ref': sp.FieldResult('Romans 3:25-26', 'decisions'),
+        'preach_date': sp.FieldResult('2026-05-24', 'decisions'),
+        'points': sp.FieldResult(points_md, 'outline'),
+        'conclusion': sp.FieldResult('God is righteous.', 'mined'),
+    }
+    out = sp.render('handout', ctx)
+    assert 'Romans 3:25-26' in out
+    assert 'God ________' in out  # 4+ underscores survives substitution
+    assert '<!--PAGEBREAK-->' in out
+    # No em-dashes anywhere.
+    assert '—' not in out
+    # The only legal `--` is in the PAGEBREAK marker; everything else must be `---` HR or no `--`.
+    for line in out.splitlines():
+        if '<!--PAGEBREAK-->' in line:
+            continue
+        if _re.fullmatch(r'-{3,}\s*', line):
+            continue
+        assert '--' not in line, f'unexpected double-hyphen in: {line!r}'
+
+
+def test_handout_template_filename_triggers_tight_print_profile():
+    # Smoke: md_to_html's _pick_css selects the handout profile when the
+    # stem contains "handout". This test pins the filename convention.
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).parent.parent.parent))
+    from md_to_html import _pick_css, _HANDOUT_CSS
+    assert _pick_css('romans-3-25-26-congregation-handout') == _HANDOUT_CSS
