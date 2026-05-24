@@ -547,3 +547,24 @@ def test_cli_report_prints_recent_mining_percentages(capsys):
     assert str(sid) in out
     assert 'manuscript' in out
     assert '0.333' in out or '33.3' in out
+
+
+def test_md_to_html_string_picks_handout_profile_for_handout_stem():
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).parent.parent.parent))
+    from md_to_html import md_to_html_string, _HANDOUT_CSS
+    md = '# Title\n\nSome prose.'
+    html = md_to_html_string(md, stem='romans-3-25-26-congregation-handout')
+    assert '<!DOCTYPE html>' in html
+    assert '<title>Title</title>' in html
+    assert _HANDOUT_CSS.strip() in html
+
+
+def test_md_to_html_string_default_profile():
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).parent.parent.parent))
+    from md_to_html import md_to_html_string, _BASE_CSS
+    html = md_to_html_string('# A', stem='manuscript')
+    assert _BASE_CSS.strip() in html
