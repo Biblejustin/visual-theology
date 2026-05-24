@@ -9,11 +9,14 @@ Run:
 """
 
 import atexit
+import io
 import json
 import os
 import re
 import sys
+import zipfile
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 # Add tools directory to path
 TOOLS_DIR = Path(__file__).parent.parent
@@ -1175,6 +1178,263 @@ def _build_outline_summary(session_id):
         return _format_outline_summary(tree) if tree else ''
     except Exception:
         return ''
+
+
+def _outline_export_title(session):
+    """Human title for exported preaching outlines."""
+    passage = (session or {}).get("passage_ref") or "Sermon"
+    return f"Preaching Outline - {passage}"
+
+
+def _safe_export_filename(session, ext):
+    passage = (session or {}).get("passage_ref") or "sermon"
+    base = re.sub(r"[^A-Za-z0-9]+", "-", passage).strip("-").lower() or "sermon"
+    return f"preaching-outline-{base}.{ext}"
+
+
+def _outline_lines(tree):
+    """Flatten the outline tree into readable indented export lines."""
+    lines = []
+
+    def walk(nodes, depth=0):
+        for node in nodes or []:
+            content = (node.get("content") or "").strip()
+            if content:
+                ref = (node.get("verse_ref") or "").strip()
+                suffix = f" ({ref})" if ref else ""
+                lines.append((depth, f"{content}{suffix}"))
+            walk(node.get("children") or [], depth + 1)
+
+    walk(tree)
+    return lines
+
+
+def _wrap_export_text(text, width):
+    words = str(text or "").split()
+    if not words:
+        return [""]
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        if len(current) + 1 + len(word) <= width:
+            current += " " + word
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def _build_outline_docx(session, tree):
+    """Build a small .docx package without external dependencies."""
+    title = _outline_export_title(session)
+    lines = _outline_lines(tree)
+
+    def para(text, style=None):
+        style_xml = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ""
+        return (
+            "<w:p>"
+            f"{style_xml}"
+            "<w:r><w:t xml:space=\"preserve\">"
+            f"{xml_escape(text)}"
+            "</w:t></w:r>"
+            "</w:p>"
+        )
+
+    body = [para(title, "Title")]
+    passage = (session or {}).get("passage_ref") or ""
+    preach_date = (session or {}).get("preach_date") or ""
+    meta = " | ".join(p for p in [passage, f"Preach date: {preach_date}" if preach_date else ""] if p)
+    if meta:
+        body.append(para(meta))
+    body.append(para(""))
+    if lines:
+        for depth, text in lines:
+            body.append(para(("  " * depth) + text))
+    else:
+        body.append(para("No outline nodes yet."))
+
+    document_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    %s
+    <w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
+  </w:body>
+</w:document>
+""" % "\n    ".join(body)
+
+    content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>
+"""
+    rels = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>
+"""
+    styles = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="Title">
+    <w:name w:val="Title"/>
+    <w:rPr><w:b/><w:sz w:val="32"/></w:rPr>
+  </w:style>
+</w:styles>
+"""
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types)
+        zf.writestr("_rels/.rels", rels)
+        zf.writestr("word/document.xml", document_xml)
+        zf.writestr("word/styles.xml", styles)
+    return out.getvalue()
+
+
+def _pdf_escape(text):
+    return str(text or "").encode("latin-1", "replace").decode("latin-1").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _build_outline_pdf(session, tree):
+    """Build a simple text PDF without external dependencies."""
+    title = _outline_export_title(session)
+    raw_lines = [(0, title), (0, "")]
+    passage = (session or {}).get("passage_ref") or ""
+    preach_date = (session or {}).get("preach_date") or ""
+    meta = " | ".join(p for p in [passage, f"Preach date: {preach_date}" if preach_date else ""] if p)
+    if meta:
+        raw_lines.extend([(0, meta), (0, "")])
+    outline = _outline_lines(tree)
+    raw_lines.extend(outline or [(0, "No outline nodes yet.")])
+
+    pdf_lines = []
+    for depth, text in raw_lines:
+        prefix = "  " * depth
+        width = max(32, 84 - depth * 4)
+        wrapped = _wrap_export_text(text, width)
+        for i, part in enumerate(wrapped):
+            pdf_lines.append(prefix + part if i == 0 else prefix + "  " + part)
+
+    chunks = [pdf_lines[i:i + 48] for i in range(0, len(pdf_lines), 48)] or [[""]]
+    page_count = len(chunks)
+    font_id = 3 + page_count * 2
+    kids = " ".join(f"{3 + i * 2} 0 R" for i in range(page_count))
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        f"<< /Type /Pages /Kids [{kids}] /Count {page_count} >>".encode("ascii"),
+    ]
+    for i, chunk in enumerate(chunks):
+        page_id = 3 + i * 2
+        content_id = page_id + 1
+        content = ["BT", "/F1 11 Tf", "72 742 Td", "14 TL"]
+        first = True
+        for line in chunk:
+            if not first:
+                content.append("T*")
+            first = False
+            content.append(f"({_pdf_escape(line)}) Tj")
+        content.append("ET")
+        stream = "\n".join(content).encode("latin-1", "replace")
+        objects.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            f"/Resources << /Font << /F1 {font_id} 0 R >> >> "
+            f"/Contents {content_id} 0 R >>".encode("ascii")
+        )
+        objects.append(
+            b"<< /Length " + str(len(stream)).encode("ascii") +
+            b" >>\nstream\n" + stream + b"\nendstream"
+        )
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    out = io.BytesIO()
+    out.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for i, obj in enumerate(objects, start=1):
+        offsets.append(out.tell())
+        out.write(f"{i} 0 obj\n".encode("ascii"))
+        out.write(obj)
+        out.write(b"\nendobj\n")
+    xref = out.tell()
+    out.write(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    out.write(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        out.write(f"{off:010d} 00000 n \n".encode("ascii"))
+    out.write(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode("ascii")
+    )
+    return out.getvalue()
+
+
+@app.route("/study/session/<int:session_id>/pack/<artifact>.md")
+def study_pack_artifact(session_id, artifact):
+    """Download one sermon-pack artifact (manuscript|outline|handout) as
+    markdown, or render to HTML when ?format=html is set.
+
+    See docs/superpowers/specs/2026-05-23-sermon-pack-deliverables-design.md."""
+    session_row, err = require_session(companion_db, session_id)
+    if err:
+        return err
+    if artifact not in ('manuscript', 'outline', 'handout'):
+        return jsonify({'error': 'artifact must be manuscript, outline, or handout'}), 400
+
+    # The generator imports tools/sermon_pack.py from the parent of tools/workbench/.
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).parent.parent))
+    import sermon_pack  # type: ignore
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        result = sermon_pack.generate(
+            session_id, db_path=companion_db.db_path,
+            out_dir=td, artifacts=(artifact,),
+            companion_db=companion_db,
+        )
+    info = result[artifact]
+    fmt = (request.args.get('format') or 'md').lower()
+    passage = session_row.get('passage_ref') or f'session-{session_id}'
+    slug = re.sub(r'[^A-Za-z0-9]+', '-', passage).strip('-').lower() or 'sermon'
+    suffix = {'manuscript': 'manuscript', 'outline': 'preaching-outline',
+              'handout': 'congregation-handout'}[artifact]
+    base = f'{slug}-{suffix}'
+
+    if fmt == 'html':
+        from md_to_html import md_to_html_string  # type: ignore
+        html_doc = md_to_html_string(info['content'], stem=base)
+        return Response(
+            html_doc, mimetype='text/html',
+            headers={'Content-Disposition': f'attachment; filename="{base}.html"'},
+        )
+
+    return Response(
+        info['content'], mimetype='text/markdown; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename="{base}.md"'},
+    )
+
+
+@app.route("/study/session/<int:session_id>/outline/export.<fmt>")
+def study_outline_export(session_id, fmt):
+    """Download the current preaching outline as PDF or Word (.docx)."""
+    session_row, err = require_session(companion_db, session_id)
+    if err:
+        return err
+    fmt = (fmt or "").lower()
+    if fmt not in {"pdf", "docx"}:
+        return jsonify({"error": "format must be pdf or docx"}), 400
+    tree = companion_db.get_outline_tree(session_id)
+    if fmt == "docx":
+        data = _build_outline_docx(session_row, tree)
+        mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    else:
+        data = _build_outline_pdf(session_row, tree)
+        mimetype = "application/pdf"
+    filename = _safe_export_filename(session_row, fmt)
+    return Response(
+        data,
+        mimetype=mimetype,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.route("/study/session/<int:session_id>/next-action/refresh", methods=["POST"])
