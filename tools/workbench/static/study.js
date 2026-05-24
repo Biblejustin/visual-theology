@@ -1187,3 +1187,51 @@ Object.assign(window, {
     window.location.reload();
   });
 })();
+
+// Sermon-pack source-breakdown pill
+// Fetches the latest per-artifact metrics for this session and renders
+// a one-line summary in the sidebar pill. Quiet by design: when no
+// generations have happened yet, the pill shows "not yet built".
+(function () {
+    const pill = document.getElementById('sermon-pack-pill');
+    if (!pill || !window.studySessionId) return;
+    const valueEl = pill.querySelector('.pill-value');
+
+    async function refresh() {
+        try {
+            const r = await fetch('/study/session/' + window.studySessionId + '/pack/metrics');
+            if (!r.ok) return;
+            const data = await r.json();
+            if (!data || Object.keys(data).length === 0) {
+                valueEl.textContent = 'not yet built';
+                valueEl.setAttribute('data-empty', '');
+                return;
+            }
+            const parts = [];
+            for (const art of ['manuscript', 'outline', 'handout']) {
+                if (!data[art]) continue;
+                const pct = Math.round(data[art].mining_percentage * 100);
+                parts.push(art[0].toUpperCase() + ': ' + pct + '%');
+            }
+            valueEl.textContent = parts.join('  ');
+            valueEl.removeAttribute('data-empty');
+            // detailed breakdown in the title for hover-tooltip
+            const lines = [];
+            for (const art of ['manuscript', 'outline', 'handout']) {
+                if (!data[art]) continue;
+                const br = data[art].source_breakdown;
+                const summary = Object.entries(br)
+                    .filter(function (e) { return e[1] > 0; })
+                    .map(function (e) { return e[0] + ':' + e[1]; })
+                    .join(', ');
+                lines.push(art + ' (' + summary + ')');
+            }
+            pill.title = 'Last build source breakdown\n' + lines.join('\n');
+        } catch (e) {
+            // quiet: pill stays at default text
+        }
+    }
+
+    refresh();
+    document.addEventListener('sermon-pack-generated', refresh);
+})();
