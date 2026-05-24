@@ -43,3 +43,40 @@ class FieldResult:
 
 def missing_field(name: str) -> FieldResult:
     return FieldResult(value=f'[missing: {name}]', source='missing')
+
+
+def _open_db(db_path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def load_session_row(db_path: str, session_id: int) -> dict | None:
+    """Return the sessions row as a dict, or None."""
+    conn = _open_db(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def load_decisions(db_path: str, session_id: int) -> dict[str, str]:
+    """Return {key: value} for every committed session_decision for this session.
+
+    Returns an empty dict if the session_decisions table does not yet exist
+    (it is created lazily by SessionDecisionStore.init_db)."""
+    conn = _open_db(db_path)
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT key, value FROM session_decisions WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        return {r['key']: r['value'] for r in rows}
+    finally:
+        conn.close()

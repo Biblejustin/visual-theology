@@ -54,3 +54,43 @@ def test_missing_field_helper_renders_marker():
     fr = sp.missing_field('subject')
     assert fr.value == '[missing: subject]'
     assert fr.source == 'missing'
+
+
+def _seed_decisions(db_path, session_id, decisions):
+    """Insert session_decisions rows. The table must exist already
+    (SessionDecisionStore.init_db ran in the fixture)."""
+    from session_decisions import SessionDecisionStore
+    store = SessionDecisionStore(db_path)
+    store.init_db()
+    for k, v in decisions.items():
+        store.set_decision(session_id=session_id, key=k, value=v)
+
+
+def _seed_session(cdb, passage='Romans 3:25-26'):
+    return cdb.create_session(
+        passage_ref=passage, book=45, chapter=3,
+        verse_start=25, verse_end=26, genre='epistle',
+    )
+
+
+def test_load_decisions_returns_keyed_dict():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    _seed_decisions(path, sid, {
+        'subject': 'God is righteous.',
+        'hp_tht': 'Your God has proven His righteousness.',
+        'target_length_min': '28',
+    })
+    sp = _load_sermon_pack()
+    d = sp.load_decisions(path, sid)
+    assert d['subject'] == 'God is righteous.'
+    assert d['hp_tht'] == 'Your God has proven His righteousness.'
+    assert d['target_length_min'] == '28'
+    assert 'theme' not in d
+
+
+def test_load_decisions_empty_session_returns_empty_dict():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    sp = _load_sermon_pack()
+    assert sp.load_decisions(path, sid) == {}
