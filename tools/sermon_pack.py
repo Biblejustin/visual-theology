@@ -415,6 +415,12 @@ def generate(session_id: int, *, db_path: str, out_dir: str | Path,
         except ImportError:
             companion_db = None  # tests with no workbench package still work
 
+    # Idempotent migration: ensure sermon_pack_metrics exists. Production
+    # apps call init_db at startup; the CLI may run against a DB created
+    # before the migration landed.
+    if companion_db is not None:
+        companion_db.init_db()
+
     result: dict[str, dict] = {}
     for art in artifacts:
         ctx = resolve_artifact_fields(db_path, session_id, artifact=art)
