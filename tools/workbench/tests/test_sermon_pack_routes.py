@@ -67,3 +67,33 @@ def test_pack_bad_artifact_returns_400(client):
 def test_pack_missing_session_returns_404(client):
     r = client.get('/study/session/999999/pack/manuscript.md')
     assert r.status_code == 404
+
+
+def test_pack_metrics_returns_latest_per_artifact(client):
+    import app as app_module
+    sid = _new_session(client)
+    app_module.companion_db.save_sermon_pack_metric(
+        session_id=sid, artifact='manuscript',
+        source_breakdown={'decisions': 2, 'mined': 1, 'missing': 0,
+                          'outline': 0, 'notepad': 0, 'card': 0},
+        mining_percentage=0.333,
+    )
+    app_module.companion_db.save_sermon_pack_metric(
+        session_id=sid, artifact='outline',
+        source_breakdown={'decisions': 4, 'mined': 0, 'missing': 0,
+                          'outline': 0, 'notepad': 0, 'card': 0},
+        mining_percentage=0.0,
+    )
+    r = client.get(f'/study/session/{sid}/pack/metrics')
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data['manuscript']['mining_percentage'] == 0.333
+    assert data['outline']['mining_percentage'] == 0.0
+    assert data['manuscript']['source_breakdown']['decisions'] == 2
+
+
+def test_pack_metrics_empty_when_never_generated(client):
+    sid = _new_session(client)
+    r = client.get(f'/study/session/{sid}/pack/metrics')
+    assert r.status_code == 200
+    assert r.get_json() == {}

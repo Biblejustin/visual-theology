@@ -1413,6 +1413,25 @@ def study_pack_artifact(session_id, artifact):
     )
 
 
+@app.route("/study/session/<int:session_id>/pack/metrics")
+def study_pack_metrics(session_id):
+    """Latest per-artifact source-breakdown metrics for the sidebar pill.
+
+    Returns {} when no generations recorded yet."""
+    _, err = require_session(companion_db, session_id)
+    if err:
+        return err
+    rows = companion_db.get_latest_sermon_pack_metrics(session_id)
+    out = {}
+    for artifact, row in rows.items():
+        out[artifact] = {
+            'mining_percentage': row['mining_percentage'],
+            'generated_at': row['generated_at'],
+            'source_breakdown': json.loads(row['source_breakdown_json']),
+        }
+    return jsonify(out)
+
+
 @app.route("/study/session/<int:session_id>/outline/export.<fmt>")
 def study_outline_export(session_id, fmt):
     """Download the current preaching outline as PDF or Word (.docx)."""
