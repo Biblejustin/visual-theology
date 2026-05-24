@@ -101,3 +101,35 @@ def test_load_decisions_empty_session_returns_empty_dict():
     sid = _seed_session(cdb)
     sp = _load_sermon_pack()
     assert sp.load_decisions(path, sid) == {}
+
+
+def test_load_outline_tree_groups_main_points_with_subs():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    root = cdb.add_outline_node(sid, 'main_point', 'God displayed Jesus as mercy seat',
+                                 verse_ref='Rom 3:25')
+    cdb.add_outline_node(sid, 'sub_point', 'Tabernacle was a throne room',
+                          parent_id=root)
+    cdb.add_outline_node(sid, 'sub_point', 'Propitiation = mercy seat',
+                          parent_id=root)
+    cdb.add_outline_node(sid, 'cross_ref', 'Lev 16',
+                          parent_id=root, verse_ref='Lev 16')
+    sp = _load_sermon_pack()
+    structured = sp.load_outline_points(path, sid)
+    assert len(structured) == 1
+    pt = structured[0]
+    assert pt['title'] == 'God displayed Jesus as mercy seat'
+    assert pt['verse_ref'] == 'Rom 3:25'
+    assert [s['content'] for s in pt['subs']] == [
+        'Tabernacle was a throne room',
+        'Propitiation = mercy seat',
+    ]
+    assert [c['content'] for c in pt['cross_refs']] == ['Lev 16']
+
+
+def test_load_outline_tree_ignores_title_only_node():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    cdb.add_outline_node(sid, 'title', 'Romans 3:25-26')
+    sp = _load_sermon_pack()
+    assert sp.load_outline_points(path, sid) == []

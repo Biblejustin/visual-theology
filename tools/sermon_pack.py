@@ -74,3 +74,42 @@ def load_decisions(db_path: str, session_id: int) -> dict[str, str]:
         return {r['key']: r['value'] for r in rows}
     finally:
         conn.close()
+
+
+def load_outline_points(db_path: str, session_id: int) -> list[dict]:
+    """Return list of main-point dicts:
+        {title, verse_ref, subs: [{content, verse_ref}], cross_refs: [...], notes: [...], illustrations: [...]}
+    Title-only nodes and orphan sub-points are skipped."""
+    conn = _open_db(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, parent_id, type, content, verse_ref, rank "
+            "FROM outline_nodes WHERE session_id = ? ORDER BY rank",
+            (session_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    nodes = [dict(r) for r in rows]
+    children: dict[int | None, list[dict]] = {}
+    for n in nodes:
+        children.setdefault(n['parent_id'], []).append(n)
+
+    points = []
+    for n in children.get(None, []):
+        if n['type'] != 'main_point':
+            continue
+        kids = children.get(n['id'], [])
+        points.append({
+            'title': n['content'],
+            'verse_ref': n['verse_ref'] or '',
+            'subs': [{'content': k['content'], 'verse_ref': k['verse_ref'] or ''}
+                     for k in kids if k['type'] == 'sub_point'],
+            'cross_refs': [{'content': k['content'], 'verse_ref': k['verse_ref'] or ''}
+                           for k in kids if k['type'] == 'cross_ref'],
+            'notes': [{'content': k['content']}
+                      for k in kids if k['type'] == 'note'],
+            'illustrations': [{'content': k['content']}
+                              for k in kids if k['type'] == 'illustration'],
+        })
+    return points
