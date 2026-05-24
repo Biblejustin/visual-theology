@@ -218,3 +218,36 @@ def test_mine_is_deterministic_across_calls():
     _insert_msg(path, sid, 'assistant', b)
     sp = _load_sermon_pack()
     assert sp.mine_outline_message(path, sid) == sp.mine_outline_message(path, sid)
+
+
+def test_parse_mined_outline_extracts_sections():
+    sp = _load_sermon_pack()
+    md = (
+        '# Sermon outline\n\n'
+        '## INTRODUCTION\n\n'
+        'Opening prose paragraph.\n\n'
+        'Second intro paragraph.\n\n'
+        '## POINT 1: God displayed Jesus as mercy seat\n\n'
+        'Body for point 1.\n\n'
+        '### Sub-section\n\nMore body.\n\n'
+        '## POINT 2: God proved His righteousness\n\n'
+        'Body for point 2.\n\n'
+        '## CONCLUSION\n\nClosing prose.'
+    )
+    parsed = sp.parse_mined_outline(md)
+    assert parsed['intro'].startswith('Opening prose paragraph.')
+    assert 'Second intro paragraph.' in parsed['intro']
+    assert len(parsed['points']) == 2
+    assert parsed['points'][0]['title'] == 'POINT 1: God displayed Jesus as mercy seat'
+    assert 'Body for point 1.' in parsed['points'][0]['body']
+    assert '### Sub-section' in parsed['points'][0]['body']
+    assert parsed['points'][1]['title'].startswith('POINT 2')
+    assert parsed['conclusion'].startswith('Closing prose.')
+
+
+def test_parse_mined_outline_missing_sections_return_empty_string():
+    sp = _load_sermon_pack()
+    parsed = sp.parse_mined_outline('# Title\n\nSome prose with no H2 anywhere.')
+    assert parsed['intro'] == ''
+    assert parsed['points'] == []
+    assert parsed['conclusion'] == ''

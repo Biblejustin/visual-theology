@@ -178,3 +178,43 @@ def mine_outline_message(db_path: str, session_id: int) -> str | None:
             best_key = key
             best = c
     return best
+
+
+_H2_RE = re.compile(r'(?m)^##\s+(.+?)\s*$')
+
+
+def parse_mined_outline(md: str) -> dict:
+    """Split a mined outline message into {intro, points: [{title, body}], conclusion}.
+
+    Sections under `## INTRODUCTION` (or `## INTRO`) -> intro.
+    Sections under `## POINT N: ...` (or any `## ` not labelled CONCLUSION/INTRO)
+    -> points list (the title is the H2 text, the body is everything until
+    the next H2).
+    Sections under `## CONCLUSION` -> conclusion.
+    All other H2s are treated as points."""
+    intro_parts: list[str] = []
+    points: list[dict] = []
+    conclusion_parts: list[str] = []
+
+    matches = list(_H2_RE.finditer(md))
+    if not matches:
+        return {'intro': '', 'points': [], 'conclusion': ''}
+
+    for i, m in enumerate(matches):
+        title = m.group(1).strip()
+        body_start = m.end()
+        body_end = matches[i + 1].start() if i + 1 < len(matches) else len(md)
+        body = md[body_start:body_end].strip()
+        upper = title.upper()
+        if upper in ('INTRODUCTION', 'INTRO'):
+            intro_parts.append(body)
+        elif upper == 'CONCLUSION':
+            conclusion_parts.append(body)
+        else:
+            points.append({'title': title, 'body': body})
+
+    return {
+        'intro': '\n\n'.join(p for p in intro_parts if p),
+        'points': points,
+        'conclusion': '\n\n'.join(p for p in conclusion_parts if p),
+    }
