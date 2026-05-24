@@ -18,10 +18,17 @@ def _load_sermon_pack():
 
 
 def _fresh_db():
+    """Create a temp DB with all stores the generator may read from.
+
+    Matches conftest.init_all_app_globals so tests exercise the same
+    schema set the live app initializes at startup. Add new store inits
+    here as the generator's source coverage expands."""
     tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
     tmp.close()
     cdb = CompanionDB(tmp.name)
     cdb.init_db()
+    from session_decisions import SessionDecisionStore
+    SessionDecisionStore(tmp.name).init_db()
     return cdb, tmp.name
 
 

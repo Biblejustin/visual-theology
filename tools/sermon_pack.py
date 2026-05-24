@@ -64,19 +64,13 @@ def load_session_row(db_path: str, session_id: int) -> dict | None:
 
 
 def load_decisions(db_path: str, session_id: int) -> dict[str, str]:
-    """Return {key: value} for every committed session_decision for this session.
-
-    Returns an empty dict if the session_decisions table does not yet exist
-    (it is created lazily by SessionDecisionStore.init_db)."""
+    """Return {key: value} for every committed session_decision for this session."""
     conn = _open_db(db_path)
     try:
-        try:
-            rows = conn.execute(
-                "SELECT key, value FROM session_decisions WHERE session_id = ?",
-                (session_id,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return {}
+        rows = conn.execute(
+            "SELECT key, value FROM session_decisions WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
         return {r['key']: r['value'] for r in rows}
     finally:
         conn.close()
