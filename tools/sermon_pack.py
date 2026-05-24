@@ -113,3 +113,34 @@ def load_outline_points(db_path: str, session_id: int) -> list[dict]:
                               for k in kids if k['type'] == 'illustration'],
         })
     return points
+
+
+def load_notepads(db_path: str, session_id: int) -> dict[str, str]:
+    """Return {phase: content} for non-empty card_notepads."""
+    conn = _open_db(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT phase, content FROM card_notepads "
+            "WHERE session_id = ? AND content != ''",
+            (session_id,),
+        ).fetchall()
+        return {r['phase']: r['content'] for r in rows}
+    finally:
+        conn.close()
+
+
+def load_card_responses(db_path: str, session_id: int) -> dict[str, list[str]]:
+    """Return {phase: [content, ...]} ordered by created_at."""
+    conn = _open_db(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT phase, content FROM card_responses "
+            "WHERE session_id = ? ORDER BY created_at",
+            (session_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        out.setdefault(r['phase'], []).append(r['content'])
+    return out

@@ -1,4 +1,4 @@
-import os, sys, tempfile, json
+import os, sys, tempfile, json, sqlite3
 import importlib.util
 from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -133,3 +133,39 @@ def test_load_outline_tree_ignores_title_only_node():
     cdb.add_outline_node(sid, 'title', 'Romans 3:25-26')
     sp = _load_sermon_pack()
     assert sp.load_outline_points(path, sid) == []
+
+
+def test_load_notepads_returns_phase_keyed_dict():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    cdb.save_card_notepad(sid, 'card_digestion', 'The text wrestles with...')
+    cdb.save_card_notepad(sid, 'card_read_translate', 'My translation work...')
+    sp = _load_sermon_pack()
+    notepads = sp.load_notepads(path, sid)
+    assert notepads['card_digestion'] == 'The text wrestles with...'
+    assert notepads['card_read_translate'] == 'My translation work...'
+    assert 'card_prayer' not in notepads
+
+
+def test_load_card_responses_flattens_to_phase_keyed_lists():
+    cdb, path = _fresh_db()
+    sid = _seed_session(cdb)
+    # Use raw insert because save_response signature varies.
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO card_responses (session_id, phase, question_id, content, created_at) "
+        "VALUES (?, ?, ?, ?, datetime('now'))",
+        (sid, 'observation', 1, 'I notice the word propitiation.'),
+    )
+    conn.execute(
+        "INSERT INTO card_responses (session_id, phase, question_id, content, created_at) "
+        "VALUES (?, ?, ?, ?, datetime('now'))",
+        (sid, 'observation', 2, 'Verb tenses shift in v.26.'),
+    )
+    conn.commit(); conn.close()
+    sp = _load_sermon_pack()
+    by_phase = sp.load_card_responses(path, sid)
+    assert by_phase['observation'] == [
+        'I notice the word propitiation.',
+        'Verb tenses shift in v.26.',
+    ]
