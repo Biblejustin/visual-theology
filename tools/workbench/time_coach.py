@@ -312,32 +312,6 @@ def prep_window_position():
     """
     from datetime import timedelta
     now = _now().astimezone()
-    raw_override = os.environ.get("LOGOS_CUTOFF_OVERRIDE_UNTIL")
-    if raw_override:
-        try:
-            override_until = datetime.fromisoformat(raw_override)
-        except ValueError:
-            override_until = None
-        if override_until is not None:
-            if override_until.tzinfo is None:
-                override_until = override_until.replace(tzinfo=now.tzinfo)
-            override_until = override_until.astimezone(now.tzinfo)
-            if now < override_until:
-                remaining = (override_until - now).total_seconds()
-                rem_hours = int(remaining // 3600)
-                rem_min = int((remaining % 3600) // 60)
-                if rem_hours >= 24:
-                    rem_label = f"{rem_hours // 24}d {rem_hours % 24}h to temporary cutoff"
-                elif rem_hours >= 1:
-                    rem_label = f"{rem_hours}h {rem_min}m to temporary cutoff"
-                else:
-                    rem_label = f"{rem_min}m to temporary cutoff"
-                tue_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=(now.weekday() - 1))
-                window_total = (override_until - tue_start).total_seconds()
-                elapsed = (now - tue_start).total_seconds()
-                fraction = 1.0 if window_total <= 0 else max(0.0, min(1.0, elapsed / window_total))
-                return {'state': 'in_window', 'fraction': fraction, 'color': 'amber',
-                        'label': rem_label}
     wd = now.weekday()  # Mon=0 .. Tue=1 .. Sun=6
     if wd == 0:  # Monday
         return {'state': 'day_off', 'fraction': None, 'color': 'muted',

@@ -40,28 +40,6 @@ LOCAL_TZ = _resolve_local_tz()
 DAILY_CUTOFF_HOUR = 17  # 5pm local — family time begins
 
 
-def _cutoff_override_until(now_utc=None, tz=None):
-    """Return the active one-off cutoff override deadline, if any.
-
-    LOGOS_CUTOFF_OVERRIDE_UNTIL is intentionally an emergency/temporary
-    escape hatch. Example: 2026-05-23T17:00:00-05:00.
-    """
-    raw = os.environ.get("LOGOS_CUTOFF_OVERRIDE_UNTIL")
-    if not raw:
-        return None
-    try:
-        override_until = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    local_tz = tz or LOCAL_TZ
-    if override_until.tzinfo is None:
-        override_until = override_until.replace(tzinfo=local_tz)
-    now_utc = now_utc or datetime.now(timezone.utc)
-    if now_utc.astimezone(local_tz) < override_until.astimezone(local_tz):
-        return override_until
-    return None
-
-
 class SessionAnalytics:
     def __init__(self, db_path):
         self.db_path = db_path
@@ -155,8 +133,6 @@ class SessionAnalytics:
         Precedence: weekend_lockout > friday_3pm > daily_5pm. The most-specific
         cutoff wins so the banner copy matches what's actually closing.
         """
-        if _cutoff_override_until(now_utc=now_utc, tz=tz) is not None:
-            return None
         if self.is_weekend_lockout(now_utc=now_utc, tz=tz):
             return 'weekend_lockout'
         if self.is_past_friday_3pm(now_utc=now_utc, tz=tz):

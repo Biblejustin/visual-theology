@@ -31,15 +31,6 @@ from seed_questions import seed_question_bank
 CENTRAL = ZoneInfo("America/Chicago")
 
 
-@pytest.fixture(autouse=True)
-def _clear_cutoff_override(monkeypatch):
-    """Isolate base cutoff-logic tests from a host-set LOGOS_CUTOFF_OVERRIDE_UNTIL
-    (e.g. a live temporary override loaded from .env). The two tests that exercise
-    the override set it explicitly via monkeypatch.setenv after this autouse fixture
-    runs, so they still see it. Mirrors the override-disable in test_cutoff_enforcement.py."""
-    monkeypatch.delenv('LOGOS_CUTOFF_OVERRIDE_UNTIL', raising=False)
-
-
 @pytest.fixture
 def sa():
     tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
@@ -164,18 +155,6 @@ def test_weekend_lockout_monday_is_false(sa):
 
 def test_active_cutoff_type_weekend_wins_over_5pm(sa):
     now_utc = datetime(2026, 5, 23, 23, 0, tzinfo=timezone.utc)  # Sat 6pm CDT
-    assert sa.active_cutoff_type(now_utc=now_utc, tz=CENTRAL) == 'weekend_lockout'
-
-
-def test_active_cutoff_type_honors_temporary_override(sa, monkeypatch):
-    monkeypatch.setenv("LOGOS_CUTOFF_OVERRIDE_UNTIL", "2026-05-23T17:00:00-05:00")
-    now_utc = datetime(2026, 5, 23, 21, 59, tzinfo=timezone.utc)  # Sat 4:59pm CDT
-    assert sa.active_cutoff_type(now_utc=now_utc, tz=CENTRAL) is None
-
-
-def test_active_cutoff_type_resumes_after_temporary_override(sa, monkeypatch):
-    monkeypatch.setenv("LOGOS_CUTOFF_OVERRIDE_UNTIL", "2026-05-23T17:00:00-05:00")
-    now_utc = datetime(2026, 5, 23, 22, 0, tzinfo=timezone.utc)  # Sat 5pm CDT
     assert sa.active_cutoff_type(now_utc=now_utc, tz=CENTRAL) == 'weekend_lockout'
 
 
