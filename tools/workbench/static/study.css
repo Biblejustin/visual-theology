@@ -459,7 +459,57 @@ body {
     display: flex;
     overflow: hidden;
     min-height: 0;
+    /* Anchor for #review-tab's overlay positioning (when .open). */
+    position: relative;
 }
+
+/* ── Review Tab (Sunday-review drawer) ──────────────────────────────────────
+ * #review-tab is the partial added by sermon_review_tab.html. It's a sibling
+ * of #card-area and #outline-sidebar inside #study-content-row. Default
+ * flex sizing collapsed #card-area to a sliver because the review content is
+ * wide and #card-area uses flex:1 1 0. Hide it by default and toggle open
+ * via the topbar Review button; render as an overlay over the card/
+ * conversation area, keeping the outline sidebar accessible underneath. */
+#review-tab {
+    display: none;
+}
+#review-tab.open {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    /* Leave the outline sidebar visible on the right so notes stay reachable
+     * while skimming Sunday review. */
+    right: var(--sidebar-w);
+    bottom: 0;
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 24px 32px 32px;
+    z-index: 20;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.4);
+}
+#review-tab .review-close {
+    position: sticky;
+    top: 0;
+    float: right;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted, var(--text));
+    font-size: 22px;
+    line-height: 1;
+    width: 32px;
+    height: 32px;
+    border-radius: 16px;
+    cursor: pointer;
+    z-index: 1;
+}
+#review-tab .review-close:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+#review-tab::-webkit-scrollbar { width: 5px; }
+#review-tab::-webkit-scrollbar-track { background: transparent; }
+#review-tab::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 3px; }
 
 /* ── Card Area ──────────────────────────────────────────────────────────── */
 
@@ -2088,6 +2138,18 @@ body {
     border-left: none;
     border-top: 1px solid var(--border, #2a2d35);
     overflow-x: auto;
+  }
+
+  /* Review-tab overlay: mobile is single-column, so cover the full viewport
+   * below the topbar instead of leaving sidebar-width gap on the right. */
+  #review-tab.open {
+    position: fixed;
+    top: 48px;       /* matches shorter mobile topbar */
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 16px 14px 24px;
+    border-right: none;
   }
 
   /* ── Start page (/study/) — sermon list scrolling + nav wrap ─────── */

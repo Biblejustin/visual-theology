@@ -4,7 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ session.passage_ref }} — Study</title>
-    <link rel="stylesheet" href="/static/study.css?v=18">
+    {# sermons.css must load before study.css so study.css's body rule wins
+     # (sermons.css redefines body bg/font globally). It provides the
+     # .sermon-card / .metric-row / .flag styles used by the review panel. #}
+    <link rel="stylesheet" href="/static/sermons.css?v=1">
+    <link rel="stylesheet" href="/static/study.css?v=19">
 </head>
 <body class="session-layout" data-mode="{{ mode }}">
     {% include "partials/horizon_bar.html" %}
@@ -30,7 +34,8 @@
             {% if linked_sermons or candidates %}
             {% set _has_update = namespace(v=false) %}
             {% for _s in linked_sermons %}{% if _s.ui_last_seen_version < _s.source_version %}{% set _has_update.v = true %}{% endif %}{% endfor %}
-            <button type="button" class="tab-button" data-tab="review" onclick="document.getElementById('review-tab').scrollIntoView({behavior:'smooth'})">Review{% if _has_update.v %}<span class="tab-badge">&bull;</span>{% endif %}</button>
+            <button type="button" class="tab-button" data-tab="review" aria-expanded="false" aria-controls="review-tab"
+                    onclick="(function(b){var p=document.getElementById('review-tab');if(!p)return;var open=p.classList.toggle('open');b.setAttribute('aria-expanded',open?'true':'false');})(this)">Review{% if _has_update.v or candidates %}<span class="tab-badge">&bull;</span>{% endif %}</button>
             {% endif %}
             {% if horizon %}
             <span class="horizon-tooltip {{ horizon.color }}" aria-label="Time until Friday 3pm cutoff">{{ horizon.label }}</span>

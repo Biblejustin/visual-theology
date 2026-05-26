@@ -1,5 +1,7 @@
 {% if linked_sermons %}
-<div id="review-tab" class="study-tab">
+<div id="review-tab" class="study-tab" role="dialog" aria-label="Sunday review">
+  <button type="button" class="review-close" aria-label="Close review"
+          onclick="(function(){var p=document.getElementById('review-tab');if(p)p.classList.remove('open');var b=document.querySelector('[data-tab=&quot;review&quot;]');if(b)b.setAttribute('aria-expanded','false');})()">&times;</button>
   <header class="review-header">
     <h2>Sunday review</h2>
     {% if linked_sermons|length == 1 %}
@@ -36,7 +38,9 @@
   {% include 'partials/sermon_coach_chat.html' %}
 </div>
 {% elif candidates %}
-<div id="review-tab" class="study-tab">
+<div id="review-tab" class="study-tab" role="dialog" aria-label="Sunday review">
+  <button type="button" class="review-close" aria-label="Close review"
+          onclick="(function(){var p=document.getElementById('review-tab');if(p)p.classList.remove('open');var b=document.querySelector('[data-tab=&quot;review&quot;]');if(b)b.setAttribute('aria-expanded','false');})()">&times;</button>
   {% set sermon = None %}
   {% include 'partials/sermon_candidates_for_session.html' %}
 </div>
