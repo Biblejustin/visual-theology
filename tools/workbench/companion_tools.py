@@ -679,6 +679,14 @@ TOOL_DEFINITIONS = [
     },
 ]
 
+# ── Prior-work recall tools (appended) ─────────────────────────────────
+# Six tools exposing prior study sessions + prior sermons + coach reviews
+# to the Study TA agent. Defined in prior_work_tools.py to keep this
+# module compact; their schemas are extended onto TOOL_DEFINITIONS here.
+# Spec: docs/superpowers/specs/2026-05-27-prior-work-recall-design.md
+from prior_work_tools import TOOL_DEFINITIONS as _PRIOR_WORK_TOOL_DEFINITIONS
+TOOL_DEFINITIONS.extend(_PRIOR_WORK_TOOL_DEFINITIONS)
+
 
 def get_tool_names():
     """Return list of available tool names."""
@@ -758,6 +766,13 @@ def execute_tool(tool_name, tool_input, session_context):
         elif tool_name == "get_coaching_insights":
             from coaching_bridge import load_coaching_insights
             return {'insights': load_coaching_insights(session_context['db'])}
+        # ── Prior-work recall (sessions + sermons + coach review) ──────
+        elif tool_name in (
+            "list_prior_sessions", "search_prior_sessions", "read_prior_session",
+            "list_prior_sermons", "search_prior_sermons", "read_prior_sermon",
+        ):
+            import prior_work_tools
+            return prior_work_tools.execute(tool_name, tool_input, session_context)
         else:
             return {"error": f"Unknown tool: {tool_name}"}
     except Exception as e:

@@ -113,6 +113,19 @@ Bryan is Reformed Presbyterian (Westminster), but he does NOT want a Reformed-on
 """
 
 
+_PRIOR_WORK_RECALL = """## Prior-Work Recall
+
+When this passage is part of a series (or when the conversation echoes earlier work), you can reach back into Bryan's prior preaching and prep:
+
+- **Prior STUDY sessions** (his prep work): `list_prior_sessions`, `search_prior_sessions`, `read_prior_session` — exposes decisions, outline, chat, notepads, annotations, and homiletics insights.
+- **Prior SERMONS** (preached text + coach review): `list_prior_sermons`, `search_prior_sermons`, `read_prior_sermon` — exposes transcript, the analyzer review (helpers, hurters, one-change-for-next-Sunday, application landing, christ thread, exegetical grounding), tagged moments, and flags.
+
+Use the lightest tool that answers the current question. List before search, search before read, single-section read before full-section read. Default scope is `series` (the current session's siblings); escalate to `scope='passage'` or `scope='all'` only when the tighter scope returned nothing relevant.
+
+When Bryan is on a wrap-up sermon, you should know what he actually preached in earlier installments, how the coach reviewed those sermons, and what argument moves are already on the table — pull that yourself rather than asking him to recap.
+"""
+
+
 # ── Active-phase focus blocks (review #4) ───────────────────────────
 #
 # Each v2 phase gets a focused block surfacing the SPECIFIC posture
@@ -432,6 +445,8 @@ You have research tools (Bible, lexicon, grammar, commentary, library search, cr
     if outline_summary:
         prompt += f"\n\n## Current Outline\n\n{outline_summary}"
 
+    prompt += f"\n\n{_PRIOR_WORK_RECALL}"
+
     return prompt
 
 
@@ -587,6 +602,8 @@ Research tools (Bible, lexicon, grammar, commentary, library search) for when Br
 
     if outline_summary:
         prompt += f"\n\n## Current Outline\n\n{outline_summary}"
+
+    prompt += f"\n\n{_PRIOR_WORK_RECALL}"
 
     return prompt
 
@@ -748,5 +765,7 @@ The 38 prior reviewed sermons in his corpus show an average of +12.4 min over th
 `gauge_outline_balance` is your primary diagnostic — run it as part of the audit. `check_sermon_coherence` supports Pass 4 (redundancy / prior-claim drift). Research tools (Bible, lexicon, commentary, library search) for citation work when you propose a cut and want to cite a past sermon's shape.
 
 {_EDITING_BEHAVIORAL_CONSTRAINTS}"""
+
+    prompt += f"\n\n{_PRIOR_WORK_RECALL}"
 
     return prompt
