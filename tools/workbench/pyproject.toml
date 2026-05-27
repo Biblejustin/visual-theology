@@ -2,4 +2,5 @@
 markers = [
     "e2e: End-to-end browser tests (Playwright)",
     "tools: Tool integration tests (requires ANTHROPIC_API_KEY)",
+    "llm: Anti-sycophancy LLM-in-loop tests (Level 2 + 3, requires ANTHROPIC_API_KEY; opt-in)",
 ]
