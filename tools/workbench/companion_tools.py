@@ -649,9 +649,9 @@ TOOL_DEFINITIONS = [
         "description": (
             "Look up the syntactic phrase structure for a Bible passage from "
             "Cascadia Syntax Graphs (NT) or Andersen-Forbes Phrase Markers (OT). "
-            "Returns digested head/dependents/relation info — directly useful for "
-            "genitive, participle, and clause-structure questions. Pair with "
-            "lookup_grammar (Wallace prose) for the textual + structural picture."
+            "Currently returns a standard envelope with an explicit diagnostic "
+            "until the phrase-graph digest is implemented. Pair with lookup_grammar "
+            "(Wallace prose) for the textual grammar picture."
         ),
         "input_schema": {
             "type": "object",
@@ -858,6 +858,50 @@ def _list_datasets(tool_input):
     }
 
 
+def _dataset_lookup_keys(dataset):
+    """Return forgiving lookup keys for agent-facing dataset selection."""
+    keys = {
+        dataset.dataset_id,
+        dataset.dataset_id.replace("DB:", ""),
+        dataset.dataset_id.replace("LLS:", ""),
+        dataset.title,
+        dataset.filename,
+    }
+    stem = os.path.splitext(dataset.filename or "")[0]
+    if stem:
+        keys.add(stem)
+    return {_normalize_dataset_key(k) for k in keys if k}
+
+
+def _normalize_dataset_key(value):
+    return "".join(ch for ch in (value or "").lower() if ch.isalnum())
+
+
+def _find_dataset(reg, dataset_id):
+    """Find a dataset by exact id, then by normalized id/title/filename alias.
+
+    The exact registry id remains canonical in results; aliases only make the
+    tool robust to prompt cues like "PhraseConcordance" or "LSTO".
+    """
+    ds = reg.find(dataset_id)
+    if ds is not None:
+        return ds
+    wanted = _normalize_dataset_key(dataset_id)
+    if not wanted:
+        return None
+    matches = [d for d in reg.list_all() if wanted in _dataset_lookup_keys(d)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _parse_tool_reference(ref_str):
+    try:
+        return parse_reference(ref_str)
+    except ValueError:
+        return None
+
+
 def _query_dataset(tool_input):
     """Look up a dataset by id and route to the adapter for its schema family."""
     dataset_id = (tool_input.get("dataset_id") or "").strip()
@@ -865,11 +909,11 @@ def _query_dataset(tool_input):
     if not dataset_id or not ref_str:
         return {"error": "dataset_id and reference are required"}
     limit = max(1, min(int(tool_input.get("limit", 25)), 100))
-    ds = get_registry().find(dataset_id)
+    ds = _find_dataset(get_registry(), dataset_id)
     if ds is None:
         return {"error": "unknown_dataset", "dataset_id": dataset_id,
                 "message": "call list_datasets() to discover valid ids"}
-    ref = parse_reference(ref_str)
+    ref = _parse_tool_reference(ref_str)
     if not ref:
         return {"error": "bad_reference", "reference": ref_str}
     try:
@@ -882,12 +926,14 @@ def _query_dataset(tool_input):
 def _lookup_syntax_graph(tool_input):
     """Pre-select a syntax dataset by testament, then delegate to the adapter."""
     ref_str = (tool_input.get("reference") or "").strip()
-    testament = (tool_input.get("testament") or "nt").lower()
     if not ref_str:
         return {"error": "reference is required"}
-    ref = parse_reference(ref_str)
+    ref = _parse_tool_reference(ref_str)
     if not ref:
         return {"error": "bad_reference", "reference": ref_str}
+    testament = (tool_input.get("testament") or "").lower()
+    if testament not in {"nt", "ot"}:
+        testament = "nt" if int(ref.get("book") or 0) >= 61 else "ot"
     reg = get_registry()
     syntax_ds = reg.by_family("syntax")
     # Heuristic dataset pick: NT → first 'Cascadia'-titled; OT → first 'Andersen-Forbes'-titled.
@@ -908,7 +954,7 @@ def _lookup_bullinger_figure(tool_input):
     ref_str = (tool_input.get("reference") or "").strip()
     if not ref_str:
         return {"error": "reference is required"}
-    ref = parse_reference(ref_str)
+    ref = _parse_tool_reference(ref_str)
     if not ref:
         return {"error": "bad_reference", "reference": ref_str}
     reg = get_registry()

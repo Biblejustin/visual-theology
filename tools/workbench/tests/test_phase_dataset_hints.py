@@ -19,13 +19,36 @@ def test_p04_exegesis_cues_syntax_graph():
     assert "lookup_syntax_graph" in p
 
 
+def test_p04_exegesis_uses_real_phrase_concordance_id():
+    p = _research("p04_exegesis")
+    assert "DB:PHRASE-CONCORDANCE" in p
+    assert "query_dataset('PhraseConcordance'" not in p
+
+
 def test_p10_patristics_cues_church_history_ontology():
     p = _research("p10_patristics")
     # The cue should name ChurchHistory (the Lexham Church History Ontology)
     # as a phase-relevant dataset reachable via query_dataset.
-    assert "churchhistory" in p.lower() or "church history" in p.lower()
+    assert "DB:CHURCH-HISTORY-ONTOLOGY" in p
 
 
 def test_p13_sermon_work_cues_bullinger():
     p = _research("p13_sermon_work")
     assert "lookup_bullinger_figure" in p or "bullinger" in p.lower()
+
+
+def test_phase_hints_use_real_dataset_ids_for_known_prompt_cues():
+    expected_ids = [
+        "DB:BIBLICAL-EVENTS",
+        "DB:BIBLICAL-PLACES",
+        "DB:PERICOPESETS",
+        "DB:SD-JESUS-OT-PROPHECY",
+        "DB:LEXHAM-ST-ONTOLOGY",
+        "DB:SD-PRAYERS",
+    ]
+    prompts = "\n".join(_research(phase) for phase in [
+        "p06_context", "p07_big_picture", "p08_christ",
+        "p09_systematics", "p13_sermon_work",
+    ])
+    for dataset_id in expected_ids:
+        assert dataset_id in prompts

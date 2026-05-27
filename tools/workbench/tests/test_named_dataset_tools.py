@@ -51,6 +51,16 @@ def test_lookup_syntax_graph_ot_picks_andersen_forbes(monkeypatch):
     assert out["dataset"] == "LLS:AF-HEB"
 
 
+def test_lookup_syntax_graph_infers_ot_from_reference(monkeypatch):
+    monkeypatch.setattr(companion_tools, "get_registry",
+                        lambda: _Reg([CSGNT, AF_HEB, BULL]), raising=False)
+    monkeypatch.setattr(companion_tools, "adapter_for",
+                        _fake_adapter_returning([{"phrase": "אלהים"}]), raising=False)
+    out = companion_tools.execute_tool("lookup_syntax_graph",
+        {"reference": "Genesis 1:1"}, {})
+    assert out["dataset"] == "LLS:AF-HEB"
+
+
 def test_lookup_bullinger_figure_picks_bullinger(monkeypatch):
     monkeypatch.setattr(companion_tools, "get_registry",
                         lambda: _Reg([CSGNT, BULL]), raising=False)
@@ -60,3 +70,9 @@ def test_lookup_bullinger_figure_picks_bullinger(monkeypatch):
         {"reference": "Romans 3:25"}, {})
     assert out["dataset"] == "LLS:BULL"
     assert out["results"] == [{"figure": "metonymy"}]
+
+
+def test_lookup_syntax_graph_returns_stable_bad_reference():
+    out = companion_tools.execute_tool("lookup_syntax_graph",
+        {"reference": "not a passage"}, {})
+    assert out == {"error": "bad_reference", "reference": "not a passage"}

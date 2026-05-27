@@ -34,13 +34,13 @@ def test_syntax_adapter_returns_empty_envelope_when_unreachable(monkeypatch):
     ad = adapter_for("syntax")
     out = ad.query({"book": 66, "chapter": 3, "verse_start": 22}, _ds())
     assert out["results"] == []
-    assert "no matches" in out["note"].lower() or "unreachable" in out["note"].lower()
+    assert "not implemented" in out["note"].lower()
 
 
 def test_syntax_adapter_deep_seam_handles_no_reader(monkeypatch):
     """Deeper-seam: if dataset_tools._get_reader() returns None, the real
     _digest_phrases body must safely return [] (so the envelope reports
-    'no matches' rather than crashing)."""
+    an explicit diagnostic rather than crashing)."""
     import dataset_tools
     monkeypatch.setattr(dataset_tools, "_get_reader", lambda: None, raising=False)
     out = adapter_for("syntax").query(

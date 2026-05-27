@@ -4,9 +4,8 @@ Graphs of the NT/SBL/LXX, Andersen-Forbes phrase markers).
 Returns a *digested* phrase summary keyed to the passage — head term +
 dependents + relation type — not raw graph node dumps. The inner-DB
 schemas of these volumes are complex graph encodings; the B-1 stub
-returns [] (no matches) so callers get the standard envelope diagnostic,
-and the dataset stays REACHABLE via the GenericAdapter through the
-query_dataset tool (Task 6). A richer digest is queued for B-2.
+returns [] with an explicit diagnostic note. A richer digest is queued
+for B-2.
 
 SCHEMA NOTES (live introspection 2026-05-23):
     Files probed via dataset_tools.query_dataset_tables / direct
@@ -31,10 +30,9 @@ SCHEMA NOTES (live introspection 2026-05-23):
     index once the reader path is unblocked, or a separate C# entrypoint
     that walks the graph natively).
 
-    Choice: ship the B-1 stub per the plan's explicit allowance. The
-    dataset stays REACHABLE via GenericAdapter (Task 4) when the agent
-    falls through to query_dataset, so nothing is hidden — we simply
-    decline to invent a digest format we can't verify against real data.
+    Choice: ship the B-1 stub per the plan's explicit allowance. Return
+    an honest diagnostic rather than inventing a digest format we can't
+    verify against real data.
 """
 from __future__ import annotations
 
@@ -52,8 +50,7 @@ def _digest_phrases(filename: str, book: int, chapter: int,
                     verse_start: int | None, verse_end: int | None,
                     limit: int) -> list[dict]:
     """B-1 stub. See module SCHEMA NOTES for why. Always returns [] in
-    production; the GenericAdapter fallback via query_dataset still gives
-    the agent best-effort access to the underlying tables."""
+    production."""
     try:
         reader = dataset_tools._get_reader()
         if reader is None:
@@ -75,4 +72,8 @@ class SyntaxAdapter:
             reference.get("verse_end"),
             limit,
         )
-        return envelope(dataset, rows)
+        return envelope(
+            dataset,
+            rows,
+            note="syntax dataset is detected, but phrase-graph digest is not implemented yet",
+        )
