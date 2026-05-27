@@ -278,6 +278,85 @@ def test_study_clock_update(client):
     assert r.get_json()['ok'] is True
 
 
+def test_study_clock_update_persists_paused_state(client):
+    """Manual pause must survive a page reload (bug 2026-05-27): the PATCH
+    accepts an optional `paused` field and writes it to sessions.timer_paused
+    so a refresh re-initializes the clock in the paused state."""
+    import app as app_module
+    session_id, _ = _make_study_session(client)
+
+    # Initial state: not paused.
+    sess = app_module.companion_db.get_session(session_id)
+    assert sess['timer_paused'] == 0
+
+    # PATCH with paused=true persists.
+    r = client.patch(
+        f'/study/session/{session_id}/clock',
+        json={'elapsed': 600, 'paused': True},
+        content_type='application/json',
+    )
+    assert r.status_code == 200
+    assert r.get_json()['paused'] is True
+    sess = app_module.companion_db.get_session(session_id)
+    assert sess['timer_paused'] == 1
+    assert sess['total_elapsed_seconds'] == 600
+
+    # PATCH with paused=false reverses it.
+    r = client.patch(
+        f'/study/session/{session_id}/clock',
+        json={'elapsed': 605, 'paused': False},
+        content_type='application/json',
+    )
+    assert r.status_code == 200
+    sess = app_module.companion_db.get_session(session_id)
+    assert sess['timer_paused'] == 0
+
+    # Legacy clients (no paused field) leave timer_paused untouched.
+    client.patch(
+        f'/study/session/{session_id}/clock',
+        json={'elapsed': 999, 'paused': True},
+        content_type='application/json',
+    )
+    r = client.patch(
+        f'/study/session/{session_id}/clock',
+        json={'elapsed': 1000},  # no paused field
+        content_type='application/json',
+    )
+    assert r.status_code == 200
+    sess = app_module.companion_db.get_session(session_id)
+    assert sess['timer_paused'] == 1  # preserved from prior PATCH
+    assert sess['total_elapsed_seconds'] == 1000
+
+
+def test_study_clock_update_rejects_non_bool_paused(client):
+    session_id, _ = _make_study_session(client)
+    r = client.patch(
+        f'/study/session/{session_id}/clock',
+        json={'elapsed': 60, 'paused': 'maybe'},
+        content_type='application/json',
+    )
+    assert r.status_code == 400
+
+
+def test_study_session_template_threads_paused_to_clock_init(client):
+    """Page render must pass session.timer_paused into studyClock.start() so
+    a reload after manual pause re-initializes paused (the bug Bryan reported)."""
+    import app as app_module
+    session_id, _ = _make_study_session(client)
+    # Force the paused state into the DB.
+    conn = app_module.companion_db._conn()
+    conn.execute(
+        "UPDATE sessions SET timer_paused = 1, total_elapsed_seconds = 120 "
+        "WHERE id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+    r = client.get(f'/study/session/{session_id}')
+    assert r.status_code == 200
+    # The studyClock.start call must pass `true` for the paused arg, so the
+    # clock initializes paused after reload rather than silently resuming.
+    assert b'studyClock.start(120, true)' in r.data
+
+
 # ── Companion routes still work ──────────────────────────────────────────
 
 # ── Card Navigation ─────────────────────────────────────────────────────

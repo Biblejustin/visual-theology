@@ -27,11 +27,20 @@ var studyClock = {
     GAP_NOTICE_MIN_SEC: 60,
     _listenersBound: false,
 
-    start: function(initialElapsed) {
+    start: function(initialElapsed, initialPaused) {
         this.elapsed = initialElapsed || 0;
         this.startTime = Date.now() - (this.elapsed * 1000);
         this.lastActivityAt = Date.now();
         this.lastTickAt = Date.now();
+        // Restore manual pause across page reloads (bug 2026-05-27).
+        // A persisted pause is treated as MANUAL (autoPausedReason=null)
+        // so it survives activity events; only auto-pauses resume on
+        // touch.
+        if (initialPaused) {
+            this.paused = true;
+            this.autoPausedAt = 0;
+            this.autoPausedReason = null;
+        }
         this._bindActivityListeners();
         if (this.interval) return;
         var self = this;
@@ -167,6 +176,9 @@ var studyClock = {
             this.paused = true;
         }
         this.updateDisplay();
+        // Persist pause state so a refresh / nav doesn't silently resume
+        // (bug 2026-05-27 — Bryan paused, came back, clock was running).
+        this.syncToServer();
     },
 
     updateDisplay: function() {
@@ -213,7 +225,7 @@ var studyClock = {
         fetch('/study/session/' + window.studySessionId + '/clock', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ elapsed: this.elapsed })
+            body: JSON.stringify({ elapsed: this.elapsed, paused: this.paused })
         }).catch(function() {});
     }
 };

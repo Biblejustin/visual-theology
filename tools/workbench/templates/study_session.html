@@ -200,13 +200,13 @@
     {% include 'partials/series_split_modal.html' %}
 
     <script src="/static/htmx.min.js"></script>
-    <script src="/static/study.js?v=13"></script>
+    <script src="/static/study.js?v=14"></script>
     <script src="/static/dictation.js?v=14"></script>
     <script>
         window.studySessionId = {{ session.id }};
         window.studyMode = "{{ mode }}";
         if (typeof studyClock !== 'undefined') {
-            studyClock.start({{ session.total_elapsed_seconds }});
+            studyClock.start({{ session.total_elapsed_seconds }}, {{ 'true' if session.timer_paused else 'false' }});
         }
         (function () {
             const pd = document.getElementById('preach-date-input');

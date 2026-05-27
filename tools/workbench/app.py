@@ -1928,7 +1928,7 @@ def study_outline_delete(session_id, node_id):
 
 @app.route("/study/session/<int:session_id>/clock", methods=["PATCH"])
 def study_clock_update(session_id):
-    """Update elapsed time from client (absolute, not delta).
+    """Update elapsed time + optional paused state from client (absolute).
 
     Hardened per bug review #3-#6:
       - 404 when the session doesn't exist (was silently 200)
@@ -1936,6 +1936,10 @@ def study_clock_update(session_id):
       - rejects non-int, negative, and absurdly-large values (was the
         source of the 898-year corruption — the tab-suspend bug used to
         let clients post any garbage number)
+
+    The optional `paused` field persists the manual pause state across
+    page reloads (bug 2026-05-27: manually pausing didn't survive a
+    refresh because only elapsed was synced).
     """
     _, err = require_session(companion_db, session_id)
     if err: return err
@@ -1949,13 +1953,29 @@ def study_clock_update(session_id):
     elapsed, err = require_int(data, "elapsed", lo=0, hi=MAX_REASONABLE_SECONDS)
     if err: return err
 
+    paused_val = data.get("paused")
+    if paused_val is None:
+        paused_int = None
+    elif isinstance(paused_val, bool):
+        paused_int = 1 if paused_val else 0
+    else:
+        return jsonify({"error": "paused must be a boolean"}), 400
+
     conn = companion_db._conn()
-    conn.execute(
-        "UPDATE sessions SET total_elapsed_seconds = ?, updated_at = ? WHERE id = ?",
-        (elapsed, companion_db._now(), session_id))
+    if paused_int is None:
+        conn.execute(
+            "UPDATE sessions SET total_elapsed_seconds = ?, updated_at = ? "
+            "WHERE id = ?",
+            (elapsed, companion_db._now(), session_id))
+    else:
+        conn.execute(
+            "UPDATE sessions SET total_elapsed_seconds = ?, timer_paused = ?, "
+            "  updated_at = ? WHERE id = ?",
+            (elapsed, paused_int, companion_db._now(), session_id))
     conn.commit()
     conn.close()
-    return jsonify({"ok": True, "elapsed": elapsed})
+    return jsonify({"ok": True, "elapsed": elapsed,
+                     "paused": bool(paused_int) if paused_int is not None else None})
 
 
 @app.route("/study/session/<int:session_id>/split", methods=["POST"])
