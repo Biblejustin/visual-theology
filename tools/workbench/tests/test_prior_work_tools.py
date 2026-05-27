@@ -476,30 +476,47 @@ def test_list_prior_sermons_series_uses_only_active_links(db):
     assert s206['has_review'] is False
 
 
-def test_list_prior_sermons_passage_scope_excludes_series(db):
-    """Passage scope must exclude sermons already in the series scope AND
-    require verse-range overlap with the current session, so the two scopes
-    are complementary and non-overlapping in the chapter-level case."""
+def test_list_prior_sermons_series_fallback_picks_up_unlinked(db):
+    """The series scope falls back to passage-overlap with sibling sessions
+    when sermon_links is incomplete or noisy. Real production data has
+    sermons that were preached on a series passage but never got an active
+    sermon_link — they should still appear in series scope."""
     _seed_romans_series(db)
     with db._safe_write() as conn:
-        # 3:1-8 — same chapter but NO overlap with 3:21-26 → excluded
+        # New sermon overlapping siblings' verse range, NO sermon_link at all.
+        _insert_sermon(conn, sid=301, title='Unlinked Rom 3:23-26 sermon',
+                       preach_date='2025-11-01',
+                       book=66, chapter=3, verse_start=23, verse_end=26,
+                       transcript='Some earlier coverage that the auto-matcher missed.',
+                       sync_status='review_ready')
+    ctx = {'session_id': 23, 'book': 66, 'chapter': 3,
+           'verse_start': 21, 'verse_end': 26, 'db': db}
+    out = pwt.list_prior_sermons({'scope': 'series'}, ctx)
+    ids = {s['sermon_id'] for s in out['sermons']}
+    # 301 has no active sermon_link, but overlaps siblings 21+22's passages,
+    # so the fallback picks it up.
+    assert 301 in ids
+    # Originally-linked sermons still present.
+    assert 205 in ids and 206 in ids and 207 in ids
+
+
+def test_list_prior_sermons_passage_scope_excludes_series_and_no_overlap(db):
+    """Passage scope returns only sermons that overlap CURRENT verses AND
+    are not already in series scope. When siblings collectively cover the
+    current range (the typical wrap-up case), passage scope is empty."""
+    _seed_romans_series(db)
+    with db._safe_write() as conn:
+        # 3:1-8 — same chapter, NO overlap with 3:21-26 → excluded from both.
         _insert_sermon(conn, sid=300, title='Earlier Romans 3 Sermon',
                        preach_date='2025-12-01',
                        book=66, chapter=3, verse_start=1, verse_end=8,
                        transcript='Earlier coverage of Romans 3.',
                        sync_status='review_ready')
-        # 3:23-26 — overlaps, not in series → included
-        _insert_sermon(conn, sid=301, title='Standalone Rom 3:23-26',
-                       preach_date='2025-11-01',
-                       book=66, chapter=3, verse_start=23, verse_end=26,
-                       transcript='Overlapping coverage of 3:23-26.',
-                       sync_status='review_ready')
     ctx = {'session_id': 23, 'book': 66, 'chapter': 3,
            'verse_start': 21, 'verse_end': 26, 'db': db}
     out = pwt.list_prior_sermons({'scope': 'passage'}, ctx)
     ids = {s['sermon_id'] for s in out['sermons']}
-    # 301 overlaps, included; 300 doesn't overlap, excluded; series sermons excluded.
-    assert 301 in ids
+    # Series sermons excluded; non-overlapping sermon (300) excluded.
     assert 300 not in ids
     assert 205 not in ids and 206 not in ids and 207 not in ids
 

@@ -140,22 +140,46 @@ def _all_session_ids(db, exclude_ids: Iterable[int], cap: int = LIST_CAP) -> lis
 
 
 def _sermon_ids_linked_to_sessions(db, session_ids: Iterable[int]) -> list[int]:
-    """Sermons with an ACTIVE sermon_link to any of the given session ids,
-    de-duped and ordered by preach_date."""
+    """Sermons connected to any of the given session ids, via EITHER:
+      (a) an active sermon_link (preferred — explicit), or
+      (b) book/chapter/verse-range overlap with one of the sessions'
+          passages (fallback — recovers from sermon_links auto-match noise).
+
+    The auto-matcher is noisy in real-world data (e.g., a sermon's only
+    active link pointing at the wrong session, or no link at all), so
+    series scope returning [] when the user can plainly see the linked
+    sermons in the pill row would be useless. The fallback gives the
+    agent reliable series recall without requiring the user to clean
+    up sermon_links by hand. De-duped, ordered by preach_date."""
     session_ids = list(session_ids)
     if not session_ids:
         return []
     placeholders = ','.join('?' for _ in session_ids)
     conn = db._conn()
     try:
-        rows = conn.execute(
+        linked = conn.execute(
             f"SELECT DISTINCT s.id, s.preach_date FROM sermons s "
             f"JOIN sermon_links sl ON sl.sermon_id = s.id "
-            f"WHERE sl.link_status = 'active' AND sl.session_id IN ({placeholders}) "
-            f"ORDER BY s.preach_date ASC",
+            f"WHERE sl.link_status = 'active' AND sl.session_id IN ({placeholders})",
             session_ids,
         ).fetchall()
-        return [r['id'] for r in rows]
+        overlap = conn.execute(
+            f"SELECT DISTINCT s.id, s.preach_date FROM sermons s "
+            f"JOIN sessions sess ON sess.book = s.book "
+            f"                  AND sess.chapter = s.chapter "
+            f"                  AND (sess.verse_start IS NULL OR s.verse_end IS NULL "
+            f"                       OR s.verse_start <= sess.verse_end) "
+            f"                  AND (sess.verse_end IS NULL OR s.verse_start IS NULL "
+            f"                       OR s.verse_end >= sess.verse_start) "
+            f"WHERE sess.id IN ({placeholders})",
+            session_ids,
+        ).fetchall()
+        merged = {}
+        for r in linked:
+            merged[r['id']] = r['preach_date'] or ''
+        for r in overlap:
+            merged.setdefault(r['id'], r['preach_date'] or '')
+        return [sid for sid, _pd in sorted(merged.items(), key=lambda kv: kv[1])]
     finally:
         conn.close()
 
