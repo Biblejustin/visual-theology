@@ -743,6 +743,10 @@ class Program
                 ExecuteInterlinear(title, articleNum);
                 break;
 
+            case "sections":
+                ExecuteSections(title, articleNum);
+                break;
+
             case "navindex":
                 IntPtr navResource = CTitle_GetResource(title);
                 IntPtr resVol = SinaiInterop_ResourceVolumeFromResource(navResource);
@@ -1063,6 +1067,58 @@ class Program
     {
         public string Word;
         public string[]? ColumnValues;
+    }
+
+    static List<string>? s_sec;
+    static void SecDefault(int off) { s_sec?.Add($"DEFAULT\t{off}"); }
+    static void SecStart(IntPtr n, int off) { s_sec?.Add($"START\t{Marshal.PtrToStringUni(n)}\t{off}"); }
+    static void SecEnd(IntPtr n, int off) { s_sec?.Add($"END\t{Marshal.PtrToStringUni(n)}\t{off}"); }
+    static void SecMedia(int t, int a, int b, int c, int d, IntPtr data, int e, int f, int g, int h) { }
+    static void SecRef(IntPtr r1, int off, IntPtr r2, int a, int b, int c, int d, int e, IntPtr r3, int f, int g, int h, int i) { }
+    static void SecJump(IntPtr r1, int off, IntPtr r2, int a, int b, int c, int d, int e, IntPtr r3, int f, int g, int h, int i) { }
+    static void SecRvi(IntPtr w, IntPtr cd, int cc) { }
+    static void SecLang(IntPtr l) { }
+    static void SecWord(IntPtr w, int len, int abs, int len2, int idx, int flags, IntPtr st, int f, int g, int h, int i2)
+    {
+        string word = (w != IntPtr.Zero && len > 0) ? Marshal.PtrToStringUni(w, len) : "";
+        string surf = st != IntPtr.Zero ? (Marshal.PtrToStringAnsi(st) ?? "") : "";
+        s_sec?.Add($"WORD\t{abs}\t{len}\t{len2}\t{idx}\t{flags}\t{surf}\t{f}\t{g}\t{h}\t{i2}\t{word.Replace("\t"," ")}");
+    }
+
+    // sections: dump the Logos indexer's view of one article -- every word with its absolute
+    // offset and surface type ("bible surface", "heading surface", "crossref footnote", ...)
+    // plus named section starts/ends. ingest_logos_bibles.py uses it to keep only verse text.
+    static void ExecuteSections(IntPtr title, int articleNum)
+    {
+        if (!SinaiInterop_CTitle_IsArticle(title, articleNum)) { Console.Error.WriteLine("[!] no article"); return; }
+        int absStart = SinaiInterop_CTitle_GetAbsoluteCharacterOffsetForArticle(title, articleNum, false);
+        Console.WriteLine($"ABSSTART\t{absStart}");
+        s_sec = new List<string>();
+        AddDefaultSectionStartCallback c1 = SecDefault;
+        AddNamedSectionCallback c2 = SecStart, c3 = SecEnd;
+        AddMediaCallback c4 = SecMedia;
+        AddWordCallback c6 = SecWord;
+        AddReferenceCallback c5 = SecRef;
+        AddResourceJumpCallback c7 = SecJump;
+        ProcessReverseInterlinearIndexDataCallback c8 = SecRvi;
+        SetLanguageCallback c9 = SecLang;
+        var pins = new object[] { c1, c2, c3, c4, c5, c6, c7, c8, c9 }.Select(o => GCHandle.Alloc(o)).ToArray();
+        try
+        {
+            IntPtr cb = NativeLogosResourceIndexerCallbackImpl_New(
+                Marshal.GetFunctionPointerForDelegate(c1), Marshal.GetFunctionPointerForDelegate(c2),
+                Marshal.GetFunctionPointerForDelegate(c3), Marshal.GetFunctionPointerForDelegate(c4),
+                Marshal.GetFunctionPointerForDelegate(c5), Marshal.GetFunctionPointerForDelegate(c6),
+                Marshal.GetFunctionPointerForDelegate(c7), Marshal.GetFunctionPointerForDelegate(c8),
+                Marshal.GetFunctionPointerForDelegate(c9));
+            IntPtr ix = NativeLogosResourceIndexer_New(title, IntPtr.Zero, cb, true, true, true, true);
+            NativeLogosResourceIndexer_IndexArticle(ix, articleNum);
+            NativeLogosResourceIndexer_FinishIndexing(ix);
+            foreach (var l in s_sec) Console.WriteLine(l);
+            NativeLogosResourceIndexer_Delete(ix);
+            NativeLogosResourceIndexerCallbackImpl_Delete(cb);
+        }
+        finally { foreach (var p in pins) p.Free(); s_sec = null; }
     }
 
     static void ExecuteInterlinear(IntPtr title, int articleNum)
@@ -1500,6 +1556,13 @@ class Program
                             mode = "find-article";
                             resourceFile = tokens[1];
                             findPattern = tokens[2];
+                            break;
+
+                        case "sections":
+                            if (tokens.Count < 3) { Console.WriteLine("---END---"); continue; }
+                            mode = "sections";
+                            resourceFile = tokens[1];
+                            int.TryParse(tokens[2], out articleNum);
                             break;
 
                         case "interlinear":
